@@ -27,6 +27,7 @@ create table public.jobs (
 
   source_storage_path text not null,
   source_file_name text,
+  source_mime_type text,
   source_duration_seconds numeric,
   source_size_bytes bigint,
 
