@@ -5,8 +5,9 @@ import { toast } from "sonner";
 import Navbar from "@/components/layout/Navbar";
 import { LANGUAGES, AVATARS, SOURCE_LANGUAGES } from "@/constants";
 import type { Language, InputMethod, AvatarConfig } from "@/types";
-import avatarFemale from "@/assets/avatar-female.jpg";
-import avatarMale from "@/assets/avatar-male.jpg";
+
+const avatarFemale = `${import.meta.env.BASE_URL}avatars/avatar-female.jpg`;
+const avatarMale = `${import.meta.env.BASE_URL}avatars/avatar-male.jpg`;
 
 const STEP_LABELS = ["Source Video", "Target Language", "Choose Avatar", "Confirm"];
 

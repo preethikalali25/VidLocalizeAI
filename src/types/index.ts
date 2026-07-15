@@ -4,6 +4,7 @@ export type ProcessingStatus =
   | "extracting"
   | "transcribing"
   | "translating"
+  | "synthesizing_speech"
   | "generating_avatar"
   | "lip_syncing"
   | "rendering"
@@ -38,6 +39,7 @@ export interface VideoJob {
   outputUrl?: string;
   currentStep?: string;
   estimatedMinutes?: number;
+  errorMessage?: string;
 }
 
 export interface ProcessingStep {

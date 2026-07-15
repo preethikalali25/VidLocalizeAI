@@ -12,6 +12,7 @@ const STATUS_CONFIG: Record<ProcessingStatus, { label: string; color: string; ic
   extracting: { label: "Extracting Audio", color: "text-yellow-400", icon: Loader2 },
   transcribing: { label: "Transcribing", color: "text-blue-400", icon: Loader2 },
   translating: { label: "Translating", color: "text-blue-400", icon: Loader2 },
+  synthesizing_speech: { label: "Synthesizing Speech", color: "text-blue-400", icon: Loader2 },
   generating_avatar: { label: "Generating Avatar", color: "text-purple-400", icon: Loader2 },
   lip_syncing: { label: "Lip Syncing", color: "text-purple-400", icon: Loader2 },
   rendering: { label: "Rendering", color: "text-orange-400", icon: Loader2 },

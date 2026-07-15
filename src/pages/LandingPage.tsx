@@ -2,8 +2,9 @@ import { useNavigate } from "react-router-dom";
 import { ArrowRight, Play, CheckCircle, Zap, Globe, Mic, Film, ChevronRight } from "lucide-react";
 import Navbar from "@/components/layout/Navbar";
 import heroImage from "@/assets/hero-transform.jpg";
-import avatarFemale from "@/assets/avatar-female.jpg";
-import avatarMale from "@/assets/avatar-male.jpg";
+
+const avatarFemale = `${import.meta.env.BASE_URL}avatars/avatar-female.jpg`;
+const avatarMale = `${import.meta.env.BASE_URL}avatars/avatar-male.jpg`;
 
 const STEPS = [
   {

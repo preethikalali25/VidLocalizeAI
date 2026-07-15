@@ -19,7 +19,7 @@ interface JobData {
 
 const STATUS_ORDER: ProcessingStatus[] = [
   "validating", "extracting", "transcribing", "translating",
-  "generating_avatar", "lip_syncing", "rendering", "complete"
+  "synthesizing_speech", "generating_avatar", "lip_syncing", "rendering", "complete"
 ];
 
 export default function ProcessingPage() {
