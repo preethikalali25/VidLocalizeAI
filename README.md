@@ -58,4 +58,15 @@ This project is built with:
 
 ## How can I deploy this project?
 
-Simply open [OnSpace]() and click on Share -> Publish.
+This repo deploys to GitHub Pages via `.github/workflows/deploy-pages.yml`
+on every push to `main` (repo **Settings → Pages → Source → GitHub Actions**
+must be enabled once).
+
+## Real AI processing
+
+The video localization pipeline (transcription, translation, TTS, AI avatar
+generation, lip-sync) is real, backed by Supabase + Gemini + Replicate — but
+requires you to create your own accounts and API keys first. See
+[PHASE3_SETUP.md](./PHASE3_SETUP.md) for the full setup checklist. Until
+that's done, the app runs in a safe "not configured" mode rather than
+crashing.
