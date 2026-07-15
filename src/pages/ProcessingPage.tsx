@@ -1,93 +1,122 @@
 import { useState, useEffect, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { CheckCircle, Clock, AlertCircle, Download, LayoutDashboard, Loader2 } from "lucide-react";
+import { CheckCircle, Clock, AlertCircle, XCircle, Download, LayoutDashboard, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import Navbar from "@/components/layout/Navbar";
 import { PROCESSING_STEPS } from "@/constants";
 import type { ProcessingStatus } from "@/types";
+import { supabase, isSupabaseConfigured } from "@/lib/supabase";
 
-interface JobData {
+interface JobRow {
   id: string;
   title: string;
-  sourceLang: string;
-  targetLanguage: string;
-  avatar: { name: string; style: string; gender: string };
+  source_lang: string;
+  target_language: string;
+  avatar_name: string;
+  avatar_gender: string;
+  avatar_style: string;
   status: ProcessingStatus;
   progress: number;
-  duration?: string;
+  error_message: string | null;
+  output_storage_path: string | null;
 }
 
-const STATUS_ORDER: ProcessingStatus[] = [
-  "validating", "extracting", "transcribing", "translating",
-  "synthesizing_speech", "generating_avatar", "lip_syncing", "rendering", "complete"
-];
+interface JobEvent {
+  id: number;
+  stage: string;
+  level: "info" | "error";
+  message: string;
+  created_at: string;
+}
 
 export default function ProcessingPage() {
   const { jobId } = useParams<{ jobId: string }>();
   const navigate = useNavigate();
 
-  const [job, setJob] = useState<JobData | null>(null);
-  const [currentStepIndex, setCurrentStepIndex] = useState(0);
-  const [stepProgress, setStepProgress] = useState(0);
-  const [logs, setLogs] = useState<string[]>([]);
-  const [isComplete, setIsComplete] = useState(false);
-
-  const addLog = useCallback((msg: string) => {
-    setLogs((prev) => [...prev.slice(-15), `[${new Date().toLocaleTimeString()}] ${msg}`]);
-  }, []);
+  const [job, setJob] = useState<JobRow | null>(null);
+  const [events, setEvents] = useState<JobEvent[]>([]);
+  const [notFound, setNotFound] = useState(false);
+  const [downloading, setDownloading] = useState(false);
 
   useEffect(() => {
-    const raw = localStorage.getItem(`job_${jobId}`);
-    if (!raw) { navigate("/dashboard"); return; }
-    const data = JSON.parse(raw) as JobData;
-    setJob(data);
-    addLog("Job received. Initializing AI pipeline...");
-    addLog(`Source language detected: ${data.sourceLang}`);
-    addLog(`Target: ${data.targetLanguage} — Avatar: ${data.avatar.name}`);
-  }, [jobId, navigate, addLog]);
+    if (!isSupabaseConfigured || !supabase || !jobId) {
+      setNotFound(true);
+      return;
+    }
 
-  useEffect(() => {
-    if (!job || isComplete) return;
+    let cancelled = false;
 
-    const step = PROCESSING_STEPS[currentStepIndex];
-    if (!step) return;
-
-    addLog(`Starting: ${step.description}...`);
-
-    const interval = setInterval(() => {
-      setStepProgress((prev) => {
-        if (prev >= 100) {
-          clearInterval(interval);
-          return 100;
-        }
-        return prev + (100 / (step.duration / 100));
-      });
-    }, 100);
-
-    const timer = setTimeout(() => {
-      clearInterval(interval);
-      setStepProgress(0);
-      addLog(`✓ Completed: ${step.label}`);
-
-      if (currentStepIndex >= PROCESSING_STEPS.length - 1) {
-        setIsComplete(true);
-        addLog("🎉 Video generation complete! Ready for download.");
-        const raw = localStorage.getItem(`job_${jobId}`);
-        if (raw) {
-          const updated = { ...JSON.parse(raw), status: "complete", progress: 100, completedAt: new Date().toISOString() };
-          localStorage.setItem(`job_${jobId}`, JSON.stringify(updated));
-        }
-      } else {
-        setCurrentStepIndex((prev) => prev + 1);
+    (async () => {
+      const { data, error } = await supabase.from("jobs").select("*").eq("id", jobId).single();
+      if (cancelled) return;
+      if (error || !data) {
+        setNotFound(true);
+        return;
       }
-    }, step.duration);
+      setJob(data as JobRow);
 
-    return () => { clearInterval(interval); clearTimeout(timer); };
-  }, [currentStepIndex, job, isComplete, jobId, addLog]);
+      const { data: existingEvents } = await supabase
+        .from("job_events")
+        .select("*")
+        .eq("job_id", jobId)
+        .order("created_at", { ascending: true });
+      if (!cancelled && existingEvents) setEvents(existingEvents as JobEvent[]);
+    })();
 
-  const overallProgress = isComplete
-    ? 100
-    : Math.round(((currentStepIndex + stepProgress / 100) / PROCESSING_STEPS.length) * 100);
+    const channel = supabase
+      .channel(`job-${jobId}`)
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "jobs", filter: `id=eq.${jobId}` },
+        (payload) => setJob(payload.new as JobRow)
+      )
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "job_events", filter: `job_id=eq.${jobId}` },
+        (payload) => setEvents((prev) => [...prev, payload.new as JobEvent])
+      )
+      .subscribe();
+
+    return () => {
+      cancelled = true;
+      supabase.removeChannel(channel);
+    };
+  }, [jobId]);
+
+  const handleDownload = useCallback(async () => {
+    if (!supabase || !job?.output_storage_path) return;
+    setDownloading(true);
+    try {
+      const { data, error } = await supabase.storage
+        .from("job-assets")
+        .createSignedUrl(job.output_storage_path, 300);
+      if (error || !data) throw new Error(error?.message ?? "Could not get download link");
+      window.open(data.signedUrl, "_blank");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Download failed");
+    } finally {
+      setDownloading(false);
+    }
+  }, [job]);
+
+  if (notFound) {
+    return (
+      <div className="min-h-screen bg-background flex flex-col items-center justify-center gap-4 text-center px-4">
+        <AlertCircle size={32} className="text-muted-foreground" />
+        <p className="text-muted-foreground max-w-sm">
+          {isSupabaseConfigured
+            ? "Job not found. It may have been deleted, or the link is invalid."
+            : "Real processing isn't set up yet — this build has no Supabase project configured."}
+        </p>
+        <button
+          onClick={() => navigate("/dashboard")}
+          className="px-6 py-2.5 rounded-xl gradient-primary text-white font-semibold text-sm"
+        >
+          Back to Dashboard
+        </button>
+      </div>
+    );
+  }
 
   if (!job) {
     return (
@@ -96,6 +125,10 @@ export default function ProcessingPage() {
       </div>
     );
   }
+
+  const isComplete = job.status === "complete";
+  const isError = job.status === "error";
+  const currentStepIndex = PROCESSING_STEPS.findIndex((s) => s.id === job.status);
 
   return (
     <div className="min-h-screen bg-background">
@@ -106,18 +139,22 @@ export default function ProcessingPage() {
           <div className="flex items-center gap-3 mb-2">
             {isComplete ? (
               <CheckCircle size={22} className="text-green-400" />
+            ) : isError ? (
+              <XCircle size={22} className="text-red-400" />
             ) : (
               <Loader2 size={22} className="text-primary animate-spin" />
             )}
             <span className={`text-sm font-medium px-2.5 py-1 rounded-full ${
-              isComplete ? "bg-green-400/10 text-green-400" : "bg-primary/10 text-primary processing-pulse"
+              isComplete ? "bg-green-400/10 text-green-400" :
+              isError ? "bg-red-400/10 text-red-400" :
+              "bg-primary/10 text-primary processing-pulse"
             }`}>
-              {isComplete ? "Complete" : "Processing"}
+              {isComplete ? "Complete" : isError ? "Failed" : "Processing"}
             </span>
           </div>
           <h1 className="font-display text-2xl font-700 mb-1 line-clamp-2">{job.title}</h1>
           <p className="text-muted-foreground text-sm capitalize">
-            {job.sourceLang} → {job.targetLanguage} · Avatar: {job.avatar.name}
+            {job.source_lang} → {job.target_language} · Avatar: {job.avatar_name}
           </p>
         </div>
 
@@ -125,18 +162,18 @@ export default function ProcessingPage() {
         <div className="glass-card rounded-2xl p-6 mb-6">
           <div className="flex items-center justify-between mb-3">
             <span className="font-display font-600 text-sm">Overall Progress</span>
-            <span className="text-2xl font-display font-700 gradient-text">{overallProgress}%</span>
+            <span className="text-2xl font-display font-700 gradient-text">{job.progress}%</span>
           </div>
           <div className="w-full h-3 bg-muted rounded-full overflow-hidden">
             <div
-              className="h-full gradient-primary rounded-full transition-all duration-300"
-              style={{ width: `${overallProgress}%` }}
+              className={`h-full rounded-full transition-all duration-300 ${isError ? "bg-red-400" : "gradient-primary"}`}
+              style={{ width: `${job.progress}%` }}
             />
           </div>
-          {!isComplete && (
+          {!isComplete && !isError && (
             <p className="flex items-center gap-1.5 text-xs text-muted-foreground mt-3">
               <Clock size={12} />
-              Estimated remaining: ~{Math.max(1, Math.ceil(((PROCESSING_STEPS.length - currentStepIndex) * 5)))} minutes
+              This may take a few minutes — you can leave and check back from the dashboard.
             </p>
           )}
         </div>
@@ -147,35 +184,33 @@ export default function ProcessingPage() {
             <h3 className="font-display font-600 text-sm mb-4">Pipeline Steps</h3>
             <div className="space-y-3">
               {PROCESSING_STEPS.map((step, i) => {
-                const isDone = isComplete || i < currentStepIndex;
-                const isActive = !isComplete && i === currentStepIndex;
-                const isPending = !isComplete && i > currentStepIndex;
+                const isDone = isComplete || (!isError && i < currentStepIndex);
+                const isActive = !isComplete && !isError && i === currentStepIndex;
+                const isFailedHere = isError && i === currentStepIndex;
                 return (
                   <div key={step.id} className={`flex items-start gap-3 p-3 rounded-xl transition-all ${
                     isActive ? "bg-primary/10 border border-primary/20" :
+                    isFailedHere ? "bg-red-400/10 border border-red-400/20" :
                     isDone ? "opacity-60" : "opacity-30"
                   }`}>
                     <div className={`w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5 ${
                       isDone ? "gradient-primary text-white text-xs" :
+                      isFailedHere ? "border-2 border-red-400" :
                       isActive ? "border-2 border-primary" :
                       "border-2 border-white/20"
                     }`}>
-                      {isDone ? "✓" : isActive ? (
+                      {isDone ? "✓" : isFailedHere ? (
+                        <XCircle size={12} className="text-red-400" />
+                      ) : isActive ? (
                         <span className="w-2 h-2 rounded-full bg-primary animate-pulse" />
                       ) : null}
                     </div>
                     <div className="min-w-0">
-                      <p className={`text-xs font-600 ${isActive ? "text-primary" : ""}`}>{step.label}</p>
+                      <p className={`text-xs font-600 ${isActive ? "text-primary" : isFailedHere ? "text-red-400" : ""}`}>
+                        {step.label}
+                      </p>
                       {isActive && (
-                        <>
-                          <p className="text-xs text-muted-foreground mt-0.5">{step.description}</p>
-                          <div className="w-full h-1 bg-muted rounded-full mt-2 overflow-hidden">
-                            <div
-                              className="h-full gradient-primary rounded-full transition-all duration-200"
-                              style={{ width: `${stepProgress}%` }}
-                            />
-                          </div>
-                        </>
+                        <p className="text-xs text-muted-foreground mt-0.5">{step.description}</p>
                       )}
                     </div>
                   </div>
@@ -193,15 +228,16 @@ export default function ProcessingPage() {
                   <h3 className="font-display font-700 text-lg text-green-400">Video Ready!</h3>
                 </div>
                 <p className="text-sm text-muted-foreground mb-6">
-                  Your AI-generated {job.targetLanguage} video with {job.avatar.name} is ready. Download it below.
+                  Your AI-generated {job.target_language} video with {job.avatar_name} is ready. Download it below.
                 </p>
                 <div className="space-y-3">
                   <button
-                    onClick={() => toast.info("This is a demo — no real video is generated yet. Real AI processing is coming soon.")}
-                    className="w-full flex items-center justify-center gap-2 px-6 py-3 rounded-xl gradient-primary text-white font-semibold hover:opacity-90 transition-all"
+                    onClick={handleDownload}
+                    disabled={downloading}
+                    className="w-full flex items-center justify-center gap-2 px-6 py-3 rounded-xl gradient-primary text-white font-semibold hover:opacity-90 transition-all disabled:opacity-60"
                   >
                     <Download size={18} />
-                    Download HD Video (1080p)
+                    {downloading ? "Preparing download..." : "Download Video"}
                   </button>
                   <button
                     onClick={() => navigate("/dashboard")}
@@ -214,20 +250,41 @@ export default function ProcessingPage() {
               </div>
             )}
 
+            {isError && (
+              <div className="glass-card rounded-2xl p-6 border border-red-400/20 bg-red-400/5 slide-up">
+                <div className="flex items-center gap-3 mb-4">
+                  <XCircle size={24} className="text-red-400" />
+                  <h3 className="font-display font-700 text-lg text-red-400">Processing Failed</h3>
+                </div>
+                <p className="text-sm text-muted-foreground mb-6 break-words">
+                  {job.error_message ?? "Something went wrong while processing this video."}
+                </p>
+                <button
+                  onClick={() => navigate("/dashboard")}
+                  className="w-full flex items-center justify-center gap-2 px-6 py-3 rounded-xl border border-white/10 text-muted-foreground hover:text-foreground hover:bg-white/5 transition-all text-sm font-medium"
+                >
+                  <LayoutDashboard size={16} />
+                  View All Jobs
+                </button>
+              </div>
+            )}
+
             {/* Live log */}
             <div className="glass-card rounded-2xl p-5">
               <h3 className="font-display font-600 text-sm mb-3 text-muted-foreground">AI Processing Log</h3>
               <div className="font-mono text-xs space-y-1.5 max-h-64 overflow-y-auto">
-                {logs.map((log, i) => (
-                  <div key={i} className={`${
-                    log.includes("✓") ? "text-green-400" :
-                    log.includes("🎉") ? "text-yellow-400" :
-                    "text-muted-foreground"
-                  }`}>
-                    {log}
+                {events.length === 0 && (
+                  <div className="text-muted-foreground">Waiting for the pipeline to start...</div>
+                )}
+                {events.map((event) => (
+                  <div
+                    key={event.id}
+                    className={event.level === "error" ? "text-red-400" : "text-muted-foreground"}
+                  >
+                    [{new Date(event.created_at).toLocaleTimeString()}] {event.message}
                   </div>
                 ))}
-                {!isComplete && (
+                {!isComplete && !isError && (
                   <div className="text-primary flex items-center gap-2">
                     <span className="processing-pulse">▌</span>
                   </div>
@@ -235,7 +292,7 @@ export default function ProcessingPage() {
               </div>
             </div>
 
-            {!isComplete && (
+            {!isComplete && !isError && (
               <div className="flex items-start gap-3 p-4 rounded-xl bg-muted/50 border border-white/5">
                 <AlertCircle size={16} className="text-muted-foreground mt-0.5 flex-shrink-0" />
                 <p className="text-xs text-muted-foreground">
