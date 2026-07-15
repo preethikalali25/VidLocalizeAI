@@ -45,32 +45,3 @@ export const SOURCE_LANGUAGES = [
   { value: "russian", label: "Russian", flag: "🇷🇺" },
   { value: "portuguese", label: "Portuguese", flag: "🇧🇷" },
 ];
-
-export const MOCK_COMPLETED_JOBS = [
-  {
-    id: "job_001",
-    title: "Machine Learning Tutorial — 完整课程",
-    duration: "2h 15m",
-    sourceLang: "chinese",
-    targetLanguage: "hindi" as Language,
-    avatar: { gender: "male" as const, style: "professional" as const, name: "Arjun" },
-    status: "complete" as const,
-    progress: 100,
-    createdAt: new Date(Date.now() - 86400000 * 2),
-    completedAt: new Date(Date.now() - 86400000 * 2 + 3600000),
-    thumbnailUrl: "https://images.unsplash.com/photo-1515879218367-8466d910aaa4?w=400&h=225&fit=crop",
-  },
-  {
-    id: "job_002",
-    title: "Korean Investment Masterclass 주식 투자",
-    duration: "1h 48m",
-    sourceLang: "korean",
-    targetLanguage: "telugu" as Language,
-    avatar: { gender: "female" as const, style: "news_anchor" as const, name: "Kavitha" },
-    status: "complete" as const,
-    progress: 100,
-    createdAt: new Date(Date.now() - 86400000),
-    completedAt: new Date(Date.now() - 86400000 + 2700000),
-    thumbnailUrl: "https://images.unsplash.com/photo-1611974789855-9c2a0a7236a3?w=400&h=225&fit=crop",
-  },
-];

@@ -4,37 +4,15 @@ import { CheckCircle, Clock, AlertCircle, XCircle, Download, LayoutDashboard, Lo
 import { toast } from "sonner";
 import Navbar from "@/components/layout/Navbar";
 import { PROCESSING_STEPS } from "@/constants";
-import type { ProcessingStatus } from "@/types";
+import type { JobRecord, JobEventRecord } from "@/types";
 import { supabase, isSupabaseConfigured } from "@/lib/supabase";
-
-interface JobRow {
-  id: string;
-  title: string;
-  source_lang: string;
-  target_language: string;
-  avatar_name: string;
-  avatar_gender: string;
-  avatar_style: string;
-  status: ProcessingStatus;
-  progress: number;
-  error_message: string | null;
-  output_storage_path: string | null;
-}
-
-interface JobEvent {
-  id: number;
-  stage: string;
-  level: "info" | "error";
-  message: string;
-  created_at: string;
-}
 
 export default function ProcessingPage() {
   const { jobId } = useParams<{ jobId: string }>();
   const navigate = useNavigate();
 
-  const [job, setJob] = useState<JobRow | null>(null);
-  const [events, setEvents] = useState<JobEvent[]>([]);
+  const [job, setJob] = useState<JobRecord | null>(null);
+  const [events, setEvents] = useState<JobEventRecord[]>([]);
   const [notFound, setNotFound] = useState(false);
   const [downloading, setDownloading] = useState(false);
 
@@ -53,14 +31,14 @@ export default function ProcessingPage() {
         setNotFound(true);
         return;
       }
-      setJob(data as JobRow);
+      setJob(data as JobRecord);
 
       const { data: existingEvents } = await supabase
         .from("job_events")
         .select("*")
         .eq("job_id", jobId)
         .order("created_at", { ascending: true });
-      if (!cancelled && existingEvents) setEvents(existingEvents as JobEvent[]);
+      if (!cancelled && existingEvents) setEvents(existingEvents as JobEventRecord[]);
     })();
 
     const channel = supabase
@@ -68,12 +46,12 @@ export default function ProcessingPage() {
       .on(
         "postgres_changes",
         { event: "UPDATE", schema: "public", table: "jobs", filter: `id=eq.${jobId}` },
-        (payload) => setJob(payload.new as JobRow)
+        (payload) => setJob(payload.new as JobRecord)
       )
       .on(
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "job_events", filter: `job_id=eq.${jobId}` },
-        (payload) => setEvents((prev) => [...prev, payload.new as JobEvent])
+        (payload) => setEvents((prev) => [...prev, payload.new as JobEventRecord])
       )
       .subscribe();
 
