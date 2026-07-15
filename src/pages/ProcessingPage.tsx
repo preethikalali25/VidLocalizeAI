@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { CheckCircle, Clock, AlertCircle, Download, LayoutDashboard, Loader2 } from "lucide-react";
+import { toast } from "sonner";
 import Navbar from "@/components/layout/Navbar";
 import { PROCESSING_STEPS } from "@/constants";
 import type { ProcessingStatus } from "@/types";
@@ -195,7 +196,10 @@ export default function ProcessingPage() {
                   Your AI-generated {job.targetLanguage} video with {job.avatar.name} is ready. Download it below.
                 </p>
                 <div className="space-y-3">
-                  <button className="w-full flex items-center justify-center gap-2 px-6 py-3 rounded-xl gradient-primary text-white font-semibold hover:opacity-90 transition-all">
+                  <button
+                    onClick={() => toast.info("This is a demo — no real video is generated yet. Real AI processing is coming soon.")}
+                    className="w-full flex items-center justify-center gap-2 px-6 py-3 rounded-xl gradient-primary text-white font-semibold hover:opacity-90 transition-all"
+                  >
                     <Download size={18} />
                     Download HD Video (1080p)
                   </button>
