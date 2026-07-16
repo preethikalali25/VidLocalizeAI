@@ -3,7 +3,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import { CheckCircle, Clock, AlertCircle, XCircle, Download, LayoutDashboard, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import Navbar from "@/components/layout/Navbar";
-import { PROCESSING_STEPS } from "@/constants";
+import { PROCESSING_STEPS, AVATAR_CATEGORIES } from "@/constants";
 import type { JobRecord, JobEventRecord } from "@/types";
 import { supabase, isSupabaseConfigured } from "@/lib/supabase";
 
@@ -107,6 +107,7 @@ export default function ProcessingPage() {
   const isComplete = job.status === "complete";
   const isError = job.status === "error";
   const currentStepIndex = PROCESSING_STEPS.findIndex((s) => s.id === job.status);
+  const avatarLabel = AVATAR_CATEGORIES.find((c) => c.value === job.avatar_category)?.label ?? "—";
 
   return (
     <div className="min-h-screen bg-background">
@@ -132,7 +133,7 @@ export default function ProcessingPage() {
           </div>
           <h1 className="font-display text-2xl font-700 mb-1 line-clamp-2">{job.title}</h1>
           <p className="text-muted-foreground text-sm capitalize">
-            {job.source_lang} → {job.target_language} · Avatar: {job.avatar_name}
+            {job.source_lang} → {job.target_language} · Avatar: {avatarLabel}
           </p>
         </div>
 
@@ -206,7 +207,7 @@ export default function ProcessingPage() {
                   <h3 className="font-display font-700 text-lg text-green-400">Video Ready!</h3>
                 </div>
                 <p className="text-sm text-muted-foreground mb-6">
-                  Your AI-generated {job.target_language} video with {job.avatar_name} is ready. Download it below.
+                  Your AI-generated {job.target_language} video with {avatarLabel} avatar is ready. Download it below.
                 </p>
                 <div className="space-y-3">
                   <button

@@ -1,4 +1,4 @@
-import type { Language, AvatarConfig, ProcessingStep } from "@/types";
+import type { Language, AvatarCategory, ProcessingStep } from "@/types";
 
 export const LANGUAGES: { value: Language; label: string; nativeLabel: string; flag: string }[] = [
   { value: "hindi", label: "Hindi", nativeLabel: "हिन्दी", flag: "🇮🇳" },
@@ -8,13 +8,11 @@ export const LANGUAGES: { value: Language; label: string; nativeLabel: string; f
   { value: "bengali", label: "Bengali", nativeLabel: "বাংলা", flag: "🇮🇳" },
 ];
 
-export const AVATARS: AvatarConfig[] = [
-  { gender: "female", style: "professional", name: "Priya" },
-  { gender: "male", style: "professional", name: "Arjun" },
-  { gender: "female", style: "casual", name: "Sneha" },
-  { gender: "male", style: "casual", name: "Rahul" },
-  { gender: "female", style: "news_anchor", name: "Kavitha" },
-  { gender: "male", style: "news_anchor", name: "Vikram" },
+export const AVATAR_CATEGORIES: { value: AvatarCategory; label: string }[] = [
+  { value: "man", label: "Man" },
+  { value: "woman", label: "Woman" },
+  { value: "boy_child", label: "Boy" },
+  { value: "girl_child", label: "Girl" },
 ];
 
 export const PROCESSING_STEPS: ProcessingStep[] = [
@@ -32,6 +30,7 @@ export const PROCESSING_STEPS: ProcessingStep[] = [
 // real pipeline is being validated. Raise once proven reliable.
 export const MAX_UPLOAD_DURATION_SECONDS = 180;
 export const MAX_UPLOAD_SIZE_MB = 300;
+export const MAX_AVATAR_PHOTO_SIZE_MB = 5;
 
 export const SOURCE_LANGUAGES = [
   { value: "chinese", label: "Chinese (Mandarin)", flag: "🇨🇳" },

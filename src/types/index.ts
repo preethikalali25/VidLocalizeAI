@@ -12,15 +12,8 @@ export type ProcessingStatus =
   | "error";
 
 export type Language = "hindi" | "telugu" | "tamil" | "kannada" | "bengali";
-export type AvatarGender = "male" | "female";
-export type AvatarStyle = "professional" | "casual" | "news_anchor";
+export type AvatarCategory = "man" | "woman" | "boy_child" | "girl_child";
 export type InputMethod = "url" | "upload";
-
-export interface AvatarConfig {
-  gender: AvatarGender;
-  style: AvatarStyle;
-  name: string;
-}
 
 export interface ProcessingStep {
   id: ProcessingStatus;
@@ -37,9 +30,7 @@ export interface JobRecord {
   title: string;
   source_lang: string;
   target_language: Language;
-  avatar_gender: AvatarGender;
-  avatar_style: AvatarStyle;
-  avatar_name: string;
+  avatar_category: AvatarCategory;
   status: ProcessingStatus;
   progress: number;
   source_duration_seconds: number | null;
@@ -57,4 +48,12 @@ export interface JobEventRecord {
   level: "info" | "error";
   message: string;
   created_at: string;
+}
+
+// Shape of a row from the `avatar_photos` table.
+export interface AvatarPhotoRecord {
+  user_id: string;
+  category: AvatarCategory;
+  storage_path: string;
+  updated_at: string;
 }

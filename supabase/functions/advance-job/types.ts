@@ -16,9 +16,7 @@ export interface JobRow {
   title: string;
   source_lang: string;
   target_language: string;
-  avatar_gender: "male" | "female";
-  avatar_style: string;
-  avatar_name: string;
+  avatar_category: "man" | "woman" | "boy_child" | "girl_child";
   input_method: string;
   source_storage_path: string;
   source_file_name: string | null;

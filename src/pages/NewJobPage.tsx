@@ -1,14 +1,11 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { Link2, Upload, ChevronRight, Info, X, Film, Lock } from "lucide-react";
+import { Link2, Upload, ChevronRight, Info, X, Film, Lock, User } from "lucide-react";
 import { toast } from "sonner";
 import Navbar from "@/components/layout/Navbar";
-import { LANGUAGES, AVATARS, SOURCE_LANGUAGES, MAX_UPLOAD_DURATION_SECONDS, MAX_UPLOAD_SIZE_MB } from "@/constants";
-import type { Language, InputMethod, AvatarConfig } from "@/types";
+import { LANGUAGES, AVATAR_CATEGORIES, SOURCE_LANGUAGES, MAX_UPLOAD_DURATION_SECONDS, MAX_UPLOAD_SIZE_MB } from "@/constants";
+import type { Language, InputMethod, AvatarCategory, AvatarPhotoRecord } from "@/types";
 import { supabase, isSupabaseConfigured, ensureAnonymousSession } from "@/lib/supabase";
-
-const avatarFemale = `${import.meta.env.BASE_URL}avatars/avatar-female.jpg`;
-const avatarMale = `${import.meta.env.BASE_URL}avatars/avatar-male.jpg`;
 
 const STEP_LABELS = ["Source Video", "Target Language", "Choose Avatar", "Confirm"];
 
@@ -58,8 +55,47 @@ export default function NewJobPage() {
   // Step 2
   const [targetLang, setTargetLang] = useState<Language>("hindi");
 
-  // Step 3
-  const [selectedAvatar, setSelectedAvatar] = useState<AvatarConfig>(AVATARS[0]);
+  // Step 3 -- avatar photos are uploaded once on the /avatars page and
+  // reused here; this page only fetches and selects, it doesn't upload.
+  const [selectedCategory, setSelectedCategory] = useState<AvatarCategory | null>(null);
+  const [avatarPhotos, setAvatarPhotos] = useState<Record<AvatarCategory, string | null>>({
+    man: null,
+    woman: null,
+    boy_child: null,
+    girl_child: null,
+  });
+  const [avatarPhotosLoading, setAvatarPhotosLoading] = useState(true);
+
+  useEffect(() => {
+    (async () => {
+      if (!supabase) {
+        setAvatarPhotosLoading(false);
+        return;
+      }
+      await ensureAnonymousSession();
+      const { data, error } = await supabase.from("avatar_photos").select("*");
+      if (error) {
+        toast.error(`Failed to load your avatars: ${error.message}`);
+        setAvatarPhotosLoading(false);
+        return;
+      }
+
+      const rows = (data ?? []) as AvatarPhotoRecord[];
+      const next: Record<AvatarCategory, string | null> = {
+        man: null, woman: null, boy_child: null, girl_child: null,
+      };
+      await Promise.all(
+        rows.map(async (row) => {
+          const { data: signed } = await supabase.storage
+            .from("job-assets")
+            .createSignedUrl(row.storage_path, 3600);
+          next[row.category] = signed?.signedUrl ?? null;
+        })
+      );
+      setAvatarPhotos(next);
+      setAvatarPhotosLoading(false);
+    })();
+  }, []);
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -91,8 +127,17 @@ export default function NewJobPage() {
     return true;
   };
 
+  const validateStep3 = () => {
+    if (!selectedCategory) {
+      toast.error("Please choose an avatar");
+      return false;
+    }
+    return true;
+  };
+
   const handleNext = () => {
     if (step === 1 && !validateStep1()) return;
+    if (step === 3 && !validateStep3()) return;
     if (step < 4) setStep(step + 1);
   };
 
@@ -103,6 +148,10 @@ export default function NewJobPage() {
     }
     if (!uploadedFile) {
       toast.error("Please upload a video file");
+      return;
+    }
+    if (!selectedCategory) {
+      toast.error("Please choose an avatar");
       return;
     }
 
@@ -126,9 +175,7 @@ export default function NewJobPage() {
           title,
           sourceLang,
           targetLanguage: targetLang,
-          avatarGender: selectedAvatar.gender,
-          avatarStyle: selectedAvatar.style,
-          avatarName: selectedAvatar.name,
+          avatarCategory: selectedCategory,
           sourceStoragePath: storagePath,
           sourceFileName: uploadedFile.name,
           sourceDurationSeconds: videoDurationSeconds,
@@ -147,9 +194,6 @@ export default function NewJobPage() {
       setSubmitStage(null);
     }
   };
-
-  const avatarImg = (av: AvatarConfig) =>
-    av.gender === "female" ? avatarFemale : avatarMale;
 
   return (
     <div className="min-h-screen bg-background">
@@ -308,33 +352,61 @@ export default function NewJobPage() {
         {step === 3 && (
           <div className="glass-card rounded-2xl p-8 slide-up">
             <h2 className="font-display text-xl font-600 mb-2">Choose AI Avatar</h2>
-            <p className="text-muted-foreground text-sm mb-8">Select the Indian presenter for your localized video</p>
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-              {AVATARS.map((av) => (
-                <button
-                  key={av.name}
-                  onClick={() => setSelectedAvatar(av)}
-                  className={`rounded-xl overflow-hidden border transition-all hover:scale-105 ${
-                    selectedAvatar.name === av.name
-                      ? "border-primary ring-2 ring-primary/30"
-                      : "border-white/10 hover:border-white/20"
-                  }`}
-                >
-                  <img
-                    src={avatarImg(av)}
-                    alt={av.name}
-                    className="w-full aspect-[3/4] object-cover"
-                  />
-                  <div className="p-3 bg-card/80">
-                    <p className="font-display font-600 text-sm">{av.name}</p>
-                    <p className="text-xs text-muted-foreground capitalize">{av.style.replace("_", " ")}</p>
-                    {selectedAvatar.name === av.name && (
-                      <span className="text-xs text-primary font-medium">Selected</span>
-                    )}
+            <p className="text-muted-foreground text-sm mb-8">Select the presenter for your localized video</p>
+
+            {avatarPhotosLoading ? (
+              <p className="text-sm text-muted-foreground">Loading your avatars...</p>
+            ) : (
+              <>
+                {Object.values(avatarPhotos).every((url) => !url) && (
+                  <div className="flex items-start gap-3 p-4 rounded-xl bg-primary/5 border border-primary/20 mb-6">
+                    <Info size={16} className="text-primary mt-0.5 flex-shrink-0" />
+                    <p className="text-sm text-muted-foreground">
+                      You haven't uploaded any avatar photos yet.{" "}
+                      <button onClick={() => navigate("/avatars")} className="text-primary underline">
+                        Go to My Avatars
+                      </button>{" "}
+                      to add one before creating a job.
+                    </p>
                   </div>
-                </button>
-              ))}
-            </div>
+                )}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                  {AVATAR_CATEGORIES.map((cat) => {
+                    const photoUrl = avatarPhotos[cat.value];
+                    const isSelected = selectedCategory === cat.value;
+                    return (
+                      <button
+                        key={cat.value}
+                        type="button"
+                        disabled={!photoUrl}
+                        onClick={() => photoUrl && setSelectedCategory(cat.value)}
+                        className={`rounded-xl overflow-hidden border transition-all ${
+                          !photoUrl ? "opacity-40 cursor-not-allowed border-white/10" :
+                          isSelected ? "border-primary ring-2 ring-primary/30 hover:scale-105" :
+                          "border-white/10 hover:border-white/20 hover:scale-105"
+                        }`}
+                      >
+                        <div className="w-full aspect-[3/4] bg-muted flex items-center justify-center">
+                          {photoUrl ? (
+                            <img src={photoUrl} alt={cat.label} className="w-full h-full object-cover" />
+                          ) : (
+                            <User size={28} className="text-muted-foreground/30" />
+                          )}
+                        </div>
+                        <div className="p-3 bg-card/80">
+                          <p className="font-display font-600 text-sm">{cat.label}</p>
+                          {photoUrl ? (
+                            isSelected && <span className="text-xs text-primary font-medium">Selected</span>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">Not uploaded</span>
+                          )}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </>
+            )}
           </div>
         )}
 
@@ -358,7 +430,7 @@ export default function NewJobPage() {
                 },
                 {
                   label: "AI Avatar",
-                  value: `${selectedAvatar.name} — ${selectedAvatar.style.replace("_", " ")} ${selectedAvatar.gender}`,
+                  value: AVATAR_CATEGORIES.find((c) => c.value === selectedCategory)?.label || "",
                 },
               ].map((row) => (
                 <div key={row.label} className="flex gap-4 p-4 rounded-xl bg-muted/50">

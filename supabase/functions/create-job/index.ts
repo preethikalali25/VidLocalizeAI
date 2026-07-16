@@ -2,8 +2,7 @@ import { corsHeaders, handleCorsPreflight } from "../_shared/cors.ts";
 import { getSupabaseAdmin, getSupabaseForRequest } from "../_shared/supabaseAdmin.ts";
 
 const ALLOWED_TARGET_LANGUAGES = ["hindi", "telugu", "tamil", "kannada", "bengali"];
-const ALLOWED_AVATAR_GENDERS = ["male", "female"];
-const ALLOWED_AVATAR_STYLES = ["professional", "casual", "news_anchor"];
+const ALLOWED_AVATAR_CATEGORIES = ["man", "woman", "boy_child", "girl_child"];
 const MAX_UPLOAD_DURATION_SECONDS = 180;
 const MAX_UPLOAD_SIZE_MB = 300;
 const MAX_JOBS_PER_HOUR = 10;
@@ -12,9 +11,7 @@ interface CreateJobBody {
   title: string;
   sourceLang: string;
   targetLanguage: string;
-  avatarGender: string;
-  avatarStyle: string;
-  avatarName: string;
+  avatarCategory: string;
   sourceStoragePath: string;
   sourceFileName?: string;
   sourceDurationSeconds?: number;
@@ -52,11 +49,8 @@ Deno.serve(async (req: Request) => {
   if (!ALLOWED_TARGET_LANGUAGES.includes(body.targetLanguage)) {
     return badRequest(`targetLanguage must be one of ${ALLOWED_TARGET_LANGUAGES.join(", ")}`);
   }
-  if (!ALLOWED_AVATAR_GENDERS.includes(body.avatarGender)) {
-    return badRequest(`avatarGender must be one of ${ALLOWED_AVATAR_GENDERS.join(", ")}`);
-  }
-  if (!ALLOWED_AVATAR_STYLES.includes(body.avatarStyle)) {
-    return badRequest(`avatarStyle must be one of ${ALLOWED_AVATAR_STYLES.join(", ")}`);
+  if (!ALLOWED_AVATAR_CATEGORIES.includes(body.avatarCategory)) {
+    return badRequest(`avatarCategory must be one of ${ALLOWED_AVATAR_CATEGORIES.join(", ")}`);
   }
   if (body.sourceDurationSeconds && body.sourceDurationSeconds > MAX_UPLOAD_DURATION_SECONDS) {
     return badRequest(`video duration exceeds the ${MAX_UPLOAD_DURATION_SECONDS}s v1 cap`);
@@ -76,6 +70,25 @@ Deno.serve(async (req: Request) => {
   const userId = userData.user.id;
 
   const admin = getSupabaseAdmin();
+
+  // Fail fast with a clear message instead of creating a job that's
+  // guaranteed to fail three stages later at generating_avatar.
+  const { data: avatarPhoto, error: avatarPhotoError } = await admin
+    .from("avatar_photos")
+    .select("category")
+    .eq("user_id", userId)
+    .eq("category", body.avatarCategory)
+    .maybeSingle();
+  if (avatarPhotoError) {
+    return new Response(JSON.stringify({ error: avatarPhotoError.message }), {
+      status: 500,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+  if (!avatarPhoto) {
+    return badRequest(`No avatar photo uploaded for "${body.avatarCategory}" -- upload one on the Avatars page first`);
+  }
+
   const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
   const { count, error: countError } = await admin
     .from("jobs")
@@ -104,9 +117,7 @@ Deno.serve(async (req: Request) => {
       title: body.title,
       source_lang: body.sourceLang,
       target_language: body.targetLanguage,
-      avatar_gender: body.avatarGender,
-      avatar_style: body.avatarStyle,
-      avatar_name: body.avatarName,
+      avatar_category: body.avatarCategory,
       input_method: "upload",
       source_storage_path: body.sourceStoragePath,
       source_file_name: body.sourceFileName ?? null,

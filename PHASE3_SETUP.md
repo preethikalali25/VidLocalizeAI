@@ -53,6 +53,10 @@ Open **SQL Editor** in the Supabase dashboard and run, in order:
    in the `cron.schedule(...)` call with your actual project ref (the
    subdomain in your Project URL) and service_role key.
 2. `supabase/migrations/0002_storage.sql`
+3. `supabase/migrations/0003_avatar_photos.sql` — sets up user-uploaded
+   avatar photos (see step 11 below). Note: this deletes any existing rows
+   in `jobs` as part of a column swap — read the comment at the top of the
+   file before running if you want to keep old test data instead.
 
 If `cron.schedule` errors on the `'20 seconds'` syntax, change it to
 `'* * * * *'` (every minute) — some projects' `pg_cron` versions only
@@ -81,13 +85,7 @@ supabase link --project-ref <your-project-ref>
 
 supabase secrets set GEMINI_API_KEY=<your-gemini-key>
 supabase secrets set REPLICATE_API_TOKEN=<your-replicate-token>
-supabase secrets set PUBLIC_AVATAR_BASE_URL=https://<your-github-username>.github.io/VidLocalizeAI/avatars
 ```
-
-`PUBLIC_AVATAR_BASE_URL` must be a real, publicly-fetchable URL — Replicate
-needs to download the avatar image from the open internet. If you've
-deployed to GitHub Pages already (Phase 2), the URL above is correct
-as-is; otherwise point it at wherever `public/avatars/` is actually served.
 
 You do **not** need to manually set `SUPABASE_URL` / `SUPABASE_ANON_KEY` /
 `SUPABASE_SERVICE_ROLE_KEY` — Supabase injects those into every Edge
@@ -135,13 +133,20 @@ add the secrets and push/re-run.
 
 ## 11. Test end to end
 
-1. `npm run dev`, go to `/new`.
-2. Upload a short clip (under 3 minutes — the v1 cap in
+1. `npm run dev`, go to `/avatars` and upload one photo for at least one of
+   the four categories (man / woman / boy child / girl child) — this is a
+   one-time step, the photo is reused for every future job. Re-uploading a
+   category replaces the previous photo.
+2. Go to `/new`.
+3. Upload a short clip (under 3 minutes — the v1 cap in
    `src/constants/index.ts`, `MAX_UPLOAD_DURATION_SECONDS`).
-3. Submit, watch `/processing/:id` — you should see real log messages
+4. On the "Choose Avatar" step, only categories you've uploaded a photo for
+   are selectable — others show "Not uploaded."
+5. Submit, watch `/processing/:id` — you should see real log messages
    appear from `job_events` as each stage actually runs, not fake timers.
-4. On success, the download button should give you a real generated video.
-5. If a stage fails, the page shows the real error message (check
+6. On success, the download button should give you a real generated video
+   using *your* uploaded photo as the avatar's face.
+7. If a stage fails, the page shows the real error message (check
    **Edge Functions → Logs** in the Supabase dashboard for the full stack
    trace — the UI only shows the summary).
 

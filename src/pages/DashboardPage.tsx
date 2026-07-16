@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { Plus, Clock, CheckCircle, XCircle, Loader2, Trash2, ExternalLink, Film, Download } from "lucide-react";
 import Navbar from "@/components/layout/Navbar";
-import { LANGUAGES } from "@/constants";
+import { LANGUAGES, AVATAR_CATEGORIES } from "@/constants";
 import type { JobRecord, ProcessingStatus } from "@/types";
 import { supabase, isSupabaseConfigured } from "@/lib/supabase";
 import { toast } from "sonner";
@@ -191,7 +191,9 @@ export default function DashboardPage() {
                       <div className="flex items-center gap-3 mt-2 flex-wrap">
                         <span className="text-xs text-muted-foreground capitalize">{job.source_lang} → {langInfo?.label || job.target_language}</span>
                         <span className="text-muted-foreground/30">·</span>
-                        <span className="text-xs text-muted-foreground">Avatar: {job.avatar_name}</span>
+                        <span className="text-xs text-muted-foreground">
+                          Avatar: {AVATAR_CATEGORIES.find((c) => c.value === job.avatar_category)?.label ?? "—"}
+                        </span>
                         <span className="text-muted-foreground/30">·</span>
                         <span className="text-xs text-muted-foreground">{formatDuration(job.source_duration_seconds)}</span>
                       </div>
