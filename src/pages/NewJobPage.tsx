@@ -12,6 +12,17 @@ const avatarMale = `${import.meta.env.BASE_URL}avatars/avatar-male.jpg`;
 
 const STEP_LABELS = ["Source Video", "Target Language", "Choose Avatar", "Confirm"];
 
+// crypto.randomUUID() only exists in secure contexts (HTTPS, or the literal
+// "localhost" origin) -- e.g. it's unavailable over plain HTTP on a LAN IP.
+// This id is just a unique storage folder name, not a security-sensitive
+// value, so a non-cryptographic fallback is fine.
+function generateUploadId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 function readVideoDurationSeconds(file: File): Promise<number> {
   return new Promise((resolve, reject) => {
     const video = document.createElement("video");
@@ -101,7 +112,7 @@ export default function NewJobPage() {
       if (!session) throw new Error("Couldn't start a session — check Supabase Anonymous sign-ins are enabled");
 
       setSubmitStage("uploading");
-      const uploadId = crypto.randomUUID();
+      const uploadId = generateUploadId();
       const storagePath = `${session.user.id}/${uploadId}/${uploadedFile.name}`;
       const { error: uploadError } = await supabase.storage
         .from("job-assets")
