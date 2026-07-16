@@ -4,12 +4,13 @@
 // doesn't map cleanly onto Deno Edge Functions working with Uint8Array from
 // Supabase Storage.
 //
-// Model IDs below are current as of this writing but Google renames/retires
-// models over time -- check https://ai.google.dev/gemini-api/docs/models
-// when you set this up, and update GEMINI_MODEL if `generateContent` calls
-// start failing with a "model not found" error.
+// Model IDs drift over time as Google renames/retires them (this one was
+// bumped from gemini-2.0-flash to gemini-3-flash-preview after the former
+// started 404ing) -- if `generateContent` calls start failing with a
+// "model not found"/404 error, check the model dropdown in the AI Studio
+// Playground for the current name and update GEMINI_MODEL below.
 
-const GEMINI_MODEL = "gemini-2.0-flash";
+const GEMINI_MODEL = "gemini-3-flash-preview";
 const GEMINI_API_BASE = "https://generativelanguage.googleapis.com";
 
 function apiKey(): string {
