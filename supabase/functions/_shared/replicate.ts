@@ -1,13 +1,14 @@
-// Avatar generation + lip-sync via Replicate, using the "create prediction
-// from a model" endpoint (always runs the model's latest version, so we
-// don't have to pin/track a version hash that goes stale).
+// Avatar generation + lip-sync via Replicate.
 //
-// Target model: lucataco/sadtalker (single portrait image + audio -> talking
-// head video). Confirm this model still exists and check its current input
-// field names at https://replicate.com/lucataco/sadtalker/api when you set
-// this up -- Replicate model APIs occasionally change their input schema.
-
-const REPLICATE_MODEL = "lucataco/sadtalker";
+// Model: lucataco/sadtalker (single portrait image + audio -> talking head
+// video). This is a community model, not one of Replicate's "official"
+// models, so it doesn't support the /models/{owner}/{name}/predictions
+// shortcut (that 404s) -- it needs the classic /v1/predictions endpoint
+// with an explicit pinned version. If predictions start failing with a
+// 404/"not found" again, get the current version hash from the "HTTP" tab
+// under https://replicate.com/lucataco/sadtalker/api and update
+// REPLICATE_MODEL_VERSION below.
+const REPLICATE_MODEL_VERSION = "85c698db7c0a66d5011435d0191db323034e1da04b912a6d365833141b6a285b";
 const REPLICATE_API_BASE = "https://api.replicate.com/v1";
 
 function apiToken(): string {
@@ -27,13 +28,14 @@ export async function createAvatarPrediction(
   sourceImageUrl: string,
   drivenAudioUrl: string
 ): Promise<ReplicatePrediction> {
-  const res = await fetch(`${REPLICATE_API_BASE}/models/${REPLICATE_MODEL}/predictions`, {
+  const res = await fetch(`${REPLICATE_API_BASE}/predictions`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${apiToken()}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
+      version: REPLICATE_MODEL_VERSION,
       input: {
         source_image: sourceImageUrl,
         driven_audio: drivenAudioUrl,
