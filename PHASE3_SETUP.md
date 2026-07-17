@@ -59,6 +59,9 @@ Open **SQL Editor** in the Supabase dashboard and run, in order:
    file before running if you want to keep old test data instead.
 4. `supabase/migrations/0004_add_avatar_age_categories.sql` — widens the
    avatar category set from 4 to 6 (adds old man / old woman).
+5. `supabase/migrations/0005_storage_update_policy.sql` — adds a missing
+   UPDATE policy for the `job-assets` bucket (needed for re-uploading/
+   replacing an avatar photo).
 
 If `cron.schedule` errors on the `'20 seconds'` syntax, change it to
 `'* * * * *'` (every minute) — some projects' `pg_cron` versions only
