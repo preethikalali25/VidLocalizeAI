@@ -20,6 +20,10 @@ function generateUploadId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
+function emptyAvatarPhotos(): Record<AvatarCategory, string | null> {
+  return Object.fromEntries(AVATAR_CATEGORIES.map((c) => [c.value, null])) as Record<AvatarCategory, string | null>;
+}
+
 function readVideoDurationSeconds(file: File): Promise<number> {
   return new Promise((resolve, reject) => {
     const video = document.createElement("video");
@@ -58,12 +62,7 @@ export default function NewJobPage() {
   // Step 3 -- avatar photos are uploaded once on the /avatars page and
   // reused here; this page only fetches and selects, it doesn't upload.
   const [selectedCategory, setSelectedCategory] = useState<AvatarCategory | null>(null);
-  const [avatarPhotos, setAvatarPhotos] = useState<Record<AvatarCategory, string | null>>({
-    man: null,
-    woman: null,
-    boy_child: null,
-    girl_child: null,
-  });
+  const [avatarPhotos, setAvatarPhotos] = useState<Record<AvatarCategory, string | null>>(emptyAvatarPhotos());
   const [avatarPhotosLoading, setAvatarPhotosLoading] = useState(true);
 
   useEffect(() => {
@@ -81,9 +80,7 @@ export default function NewJobPage() {
       }
 
       const rows = (data ?? []) as AvatarPhotoRecord[];
-      const next: Record<AvatarCategory, string | null> = {
-        man: null, woman: null, boy_child: null, girl_child: null,
-      };
+      const next = emptyAvatarPhotos();
       await Promise.all(
         rows.map(async (row) => {
           const { data: signed } = await supabase.storage

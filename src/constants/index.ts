@@ -13,6 +13,8 @@ export const AVATAR_CATEGORIES: { value: AvatarCategory; label: string }[] = [
   { value: "woman", label: "Woman" },
   { value: "boy_child", label: "Boy" },
   { value: "girl_child", label: "Girl" },
+  { value: "old_man", label: "Old Man" },
+  { value: "old_woman", label: "Old Woman" },
 ];
 
 export const PROCESSING_STEPS: ProcessingStep[] = [

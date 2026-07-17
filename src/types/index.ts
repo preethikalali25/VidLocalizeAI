@@ -12,7 +12,7 @@ export type ProcessingStatus =
   | "error";
 
 export type Language = "hindi" | "telugu" | "tamil" | "kannada" | "bengali";
-export type AvatarCategory = "man" | "woman" | "boy_child" | "girl_child";
+export type AvatarCategory = "man" | "woman" | "boy_child" | "girl_child" | "old_man" | "old_woman";
 export type InputMethod = "url" | "upload";
 
 export interface ProcessingStep {

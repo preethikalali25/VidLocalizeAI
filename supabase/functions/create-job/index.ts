@@ -2,7 +2,7 @@ import { corsHeaders, handleCorsPreflight } from "../_shared/cors.ts";
 import { getSupabaseAdmin, getSupabaseForRequest } from "../_shared/supabaseAdmin.ts";
 
 const ALLOWED_TARGET_LANGUAGES = ["hindi", "telugu", "tamil", "kannada", "bengali"];
-const ALLOWED_AVATAR_CATEGORIES = ["man", "woman", "boy_child", "girl_child"];
+const ALLOWED_AVATAR_CATEGORIES = ["man", "woman", "boy_child", "girl_child", "old_man", "old_woman"];
 const MAX_UPLOAD_DURATION_SECONDS = 180;
 const MAX_UPLOAD_SIZE_MB = 300;
 const MAX_JOBS_PER_HOUR = 10;

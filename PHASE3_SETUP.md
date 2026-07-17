@@ -57,6 +57,8 @@ Open **SQL Editor** in the Supabase dashboard and run, in order:
    avatar photos (see step 11 below). Note: this deletes any existing rows
    in `jobs` as part of a column swap — read the comment at the top of the
    file before running if you want to keep old test data instead.
+4. `supabase/migrations/0004_add_avatar_age_categories.sql` — widens the
+   avatar category set from 4 to 6 (adds old man / old woman).
 
 If `cron.schedule` errors on the `'20 seconds'` syntax, change it to
 `'* * * * *'` (every minute) — some projects' `pg_cron` versions only
@@ -134,9 +136,9 @@ add the secrets and push/re-run.
 ## 11. Test end to end
 
 1. `npm run dev`, go to `/avatars` and upload one photo for at least one of
-   the four categories (man / woman / boy child / girl child) — this is a
-   one-time step, the photo is reused for every future job. Re-uploading a
-   category replaces the previous photo.
+   the six categories (man / woman / boy child / girl child / old man /
+   old woman) — this is a one-time step, the photo is reused for every
+   future job. Re-uploading a category replaces the previous photo.
 2. Go to `/new`.
 3. Upload a short clip (under 3 minutes — the v1 cap in
    `src/constants/index.ts`, `MAX_UPLOAD_DURATION_SECONDS`).

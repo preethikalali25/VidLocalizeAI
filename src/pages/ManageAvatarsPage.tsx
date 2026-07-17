@@ -16,20 +16,18 @@ function storagePathFor(userId: string, category: AvatarCategory): string {
   return `${userId}/avatars/${category}`;
 }
 
+function emptySlots(): Record<AvatarCategory, SlotState> {
+  return Object.fromEntries(
+    AVATAR_CATEGORIES.map((c) => [c.value, { storagePath: null, signedUrl: null, uploading: false }])
+  ) as Record<AvatarCategory, SlotState>;
+}
+
 export default function ManageAvatarsPage() {
   const [loading, setLoading] = useState(true);
-  const [slots, setSlots] = useState<Record<AvatarCategory, SlotState>>({
-    man: { storagePath: null, signedUrl: null, uploading: false },
-    woman: { storagePath: null, signedUrl: null, uploading: false },
-    boy_child: { storagePath: null, signedUrl: null, uploading: false },
-    girl_child: { storagePath: null, signedUrl: null, uploading: false },
-  });
-  const fileInputs = useRef<Record<AvatarCategory, HTMLInputElement | null>>({
-    man: null,
-    woman: null,
-    boy_child: null,
-    girl_child: null,
-  });
+  const [slots, setSlots] = useState<Record<AvatarCategory, SlotState>>(emptySlots());
+  const fileInputs = useRef<Record<AvatarCategory, HTMLInputElement | null>>(
+    Object.fromEntries(AVATAR_CATEGORIES.map((c) => [c.value, null])) as Record<AvatarCategory, HTMLInputElement | null>
+  );
 
   const loadSlots = useCallback(async () => {
     if (!supabase) {
@@ -44,12 +42,7 @@ export default function ManageAvatarsPage() {
     }
 
     const rows = (data ?? []) as AvatarPhotoRecord[];
-    const next: Record<AvatarCategory, SlotState> = {
-      man: { storagePath: null, signedUrl: null, uploading: false },
-      woman: { storagePath: null, signedUrl: null, uploading: false },
-      boy_child: { storagePath: null, signedUrl: null, uploading: false },
-      girl_child: { storagePath: null, signedUrl: null, uploading: false },
-    };
+    const next = emptySlots();
 
     await Promise.all(
       rows.map(async (row) => {
