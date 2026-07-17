@@ -62,6 +62,10 @@ Open **SQL Editor** in the Supabase dashboard and run, in order:
 5. `supabase/migrations/0005_storage_update_policy.sql` — adds a missing
    UPDATE policy for the `job-assets` bucket (needed for re-uploading/
    replacing an avatar photo).
+6. `supabase/migrations/0006_fix_avatar_category_constraint.sql` — cleans
+   up a leftover overly-narrow check constraint that 0004 failed to
+   actually remove (find-by-content instead of guessing the constraint
+   name, so it's safe to run regardless of what state your project is in).
 
 If `cron.schedule` errors on the `'20 seconds'` syntax, change it to
 `'* * * * *'` (every minute) — some projects' `pg_cron` versions only
