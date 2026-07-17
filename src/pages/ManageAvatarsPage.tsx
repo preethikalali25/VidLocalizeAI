@@ -12,8 +12,23 @@ type SlotState = {
   uploading: boolean;
 };
 
-function storagePathFor(userId: string, category: AvatarCategory): string {
-  return `${userId}/avatars/${category}`;
+// Replicate's SadTalker model needs a URL with a real image extension to
+// reliably detect the file format when it downloads source_image -- an
+// extensionless key caused it to crash almost instantly (list index out of
+// range, from failing very early at file loading, well before any real
+// face-detection work). So the storage key includes an extension derived
+// from the upload's actual MIME type, and re-uploading a different format
+// explicitly deletes the old object afterward (since the key itself now
+// changes, upsert alone can't guarantee a clean overwrite anymore).
+function extForMimeType(mimeType: string): string {
+  if (mimeType === "image/png") return "png";
+  if (mimeType === "image/webp") return "webp";
+  if (mimeType === "image/gif") return "gif";
+  return "jpg"; // covers image/jpeg and any other/unrecognized image/* type
+}
+
+function storagePathFor(userId: string, category: AvatarCategory, ext: string): string {
+  return `${userId}/avatars/${category}.${ext}`;
 }
 
 function emptySlots(): Record<AvatarCategory, SlotState> {
@@ -88,10 +103,8 @@ export default function ManageAvatarsPage() {
       const session = await ensureAnonymousSession();
       if (!session) throw new Error("Couldn't start a session — check Supabase Anonymous sign-ins are enabled");
 
-      const path = storagePathFor(session.user.id, category);
-      // No file extension on the storage key, by design: it makes the key
-      // stable across re-uploads of a different image format, so upsert is
-      // always a true overwrite instead of accumulating orphaned objects.
+      const previousPath = slots[category].storagePath;
+      const path = storagePathFor(session.user.id, category, extForMimeType(file.type));
       const { error: uploadError } = await supabase.storage
         .from("job-assets")
         .upload(path, file, { contentType: file.type, upsert: true });
@@ -101,6 +114,12 @@ export default function ManageAvatarsPage() {
         .from("avatar_photos")
         .upsert({ user_id: session.user.id, category, storage_path: path }, { onConflict: "user_id,category" });
       if (upsertError) throw new Error(upsertError.message);
+
+      // Only needed if the extension changed (e.g. replacing a .png with a
+      // .jpg) -- upsert already handled a true overwrite when it didn't.
+      if (previousPath && previousPath !== path) {
+        await supabase.storage.from("job-assets").remove([previousPath]);
+      }
 
       const { data: signed } = await supabase.storage.from("job-assets").createSignedUrl(path, 3600);
       setSlots((prev) => ({
