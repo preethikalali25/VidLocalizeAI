@@ -11,8 +11,12 @@ export async function runExtracting(admin: SupabaseClient, job: JobRow): Promise
   const { bytes, contentType } = await downloadFromStorage(admin, job.source_storage_path);
   const fileUri = await uploadFileToGemini(bytes, contentType, job.source_file_name ?? job.title);
 
+  // multi_speaker jobs skip the single flat transcript entirely -- diarizing
+  // does per-speaker transcription+segmentation in one structured call.
+  const nextStatus = job.pipeline_mode === "multi_speaker" ? "diarizing" : "transcribing";
+
   return {
-    status: "transcribing",
+    status: nextStatus,
     progress: 25,
     patch: { gemini_file_uri: fileUri, source_mime_type: contentType },
     logMessage: "Video prepared for AI processing.",

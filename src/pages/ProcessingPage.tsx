@@ -1,11 +1,15 @@
 import { useState, useEffect, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { CheckCircle, Clock, AlertCircle, XCircle, Download, LayoutDashboard, Loader2 } from "lucide-react";
+import { CheckCircle, Clock, AlertCircle, XCircle, Download, LayoutDashboard, Loader2, Users, User } from "lucide-react";
 import { toast } from "sonner";
 import Navbar from "@/components/layout/Navbar";
-import { PROCESSING_STEPS, AVATAR_CATEGORIES } from "@/constants";
-import type { JobRecord, JobEventRecord } from "@/types";
+import { PROCESSING_STEPS, MULTI_SPEAKER_PROCESSING_STEPS, AVATAR_CATEGORIES } from "@/constants";
+import type { JobRecord, JobEventRecord, JobSpeakerRecord, JobSegmentRecord, AvatarPhotoRecord, AvatarCategory } from "@/types";
 import { supabase, isSupabaseConfigured } from "@/lib/supabase";
+
+function emptyAvatarPhotoMap(): Record<AvatarCategory, string | null> {
+  return Object.fromEntries(AVATAR_CATEGORIES.map((c) => [c.value, null])) as Record<AvatarCategory, string | null>;
+}
 
 export default function ProcessingPage() {
   const { jobId } = useParams<{ jobId: string }>();
@@ -15,6 +19,15 @@ export default function ProcessingPage() {
   const [events, setEvents] = useState<JobEventRecord[]>([]);
   const [notFound, setNotFound] = useState(false);
   const [downloading, setDownloading] = useState(false);
+
+  // multi_speaker pipeline only (see Phase 4 plan) -- populated once the
+  // job reaches awaiting_speaker_review.
+  const [speakers, setSpeakers] = useState<JobSpeakerRecord[]>([]);
+  const [speakerPreviews, setSpeakerPreviews] = useState<Record<string, string>>({});
+  const [assignments, setAssignments] = useState<Record<string, AvatarCategory | null>>({});
+  const [reviewAvatarPhotos, setReviewAvatarPhotos] = useState<Record<AvatarCategory, string | null>>(emptyAvatarPhotoMap());
+  const [speakersLoading, setSpeakersLoading] = useState(false);
+  const [submittingAssignments, setSubmittingAssignments] = useState(false);
 
   useEffect(() => {
     if (!isSupabaseConfigured || !supabase || !jobId) {
@@ -61,6 +74,73 @@ export default function ProcessingPage() {
     };
   }, [jobId]);
 
+  // multi_speaker pipeline only. Fetch once, when the job first reaches
+  // awaiting_speaker_review -- the speaker/segment list doesn't change
+  // again until the assignments are submitted, which moves the job out of
+  // this status entirely.
+  useEffect(() => {
+    if (!supabase || !jobId || job?.status !== "awaiting_speaker_review" || speakers.length > 0 || speakersLoading) return;
+
+    (async () => {
+      setSpeakersLoading(true);
+      const [{ data: speakerRows, error: speakersError }, { data: segmentRows }, { data: photoRows }] = await Promise.all([
+        supabase.from("job_speakers").select("*").eq("job_id", jobId).order("speaker_label", { ascending: true }),
+        supabase.from("job_segments").select("id, speaker_id, sequence_index, source_text, status").eq("job_id", jobId),
+        supabase.from("avatar_photos").select("*"),
+      ]);
+      if (speakersError) {
+        toast.error(`Failed to load detected speakers: ${speakersError.message}`);
+        setSpeakersLoading(false);
+        return;
+      }
+
+      const previews: Record<string, string> = {};
+      for (const seg of (segmentRows ?? []) as JobSegmentRecord[]) {
+        if (!previews[seg.speaker_id] && seg.source_text) previews[seg.speaker_id] = seg.source_text;
+      }
+      setSpeakerPreviews(previews);
+
+      const photoMap = emptyAvatarPhotoMap();
+      await Promise.all(
+        ((photoRows ?? []) as AvatarPhotoRecord[]).map(async (row) => {
+          const { data: signed } = await supabase.storage.from("job-assets").createSignedUrl(row.storage_path, 3600);
+          photoMap[row.category] = signed?.signedUrl ?? null;
+        })
+      );
+      setReviewAvatarPhotos(photoMap);
+
+      const rows = (speakerRows ?? []) as JobSpeakerRecord[];
+      setSpeakers(rows);
+      setAssignments(Object.fromEntries(rows.map((s) => [s.id, s.avatar_category])));
+      setSpeakersLoading(false);
+    })();
+  }, [job?.status, jobId, speakers.length, speakersLoading]);
+
+  const handleSubmitAssignments = useCallback(async () => {
+    if (!supabase || !jobId) return;
+    const missing = speakers.filter((s) => !assignments[s.id]);
+    if (missing.length > 0) {
+      toast.error("Please choose an avatar for every detected speaker");
+      return;
+    }
+
+    setSubmittingAssignments(true);
+    try {
+      const { error } = await supabase.functions.invoke("submit-speaker-assignments", {
+        body: {
+          job_id: jobId,
+          assignments: speakers.map((s) => ({ speaker_id: s.id, avatar_category: assignments[s.id] })),
+        },
+      });
+      if (error) throw new Error(error.message);
+      toast.success("Avatars assigned — resuming processing.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to submit avatar assignments");
+    } finally {
+      setSubmittingAssignments(false);
+    }
+  }, [jobId, speakers, assignments]);
+
   const handleDownload = useCallback(async () => {
     if (!supabase || !job?.output_storage_path) return;
     setDownloading(true);
@@ -106,8 +186,13 @@ export default function ProcessingPage() {
 
   const isComplete = job.status === "complete";
   const isError = job.status === "error";
-  const currentStepIndex = PROCESSING_STEPS.findIndex((s) => s.id === job.status);
-  const avatarLabel = AVATAR_CATEGORIES.find((c) => c.value === job.avatar_category)?.label ?? "—";
+  const isMultiSpeaker = job.pipeline_mode === "multi_speaker";
+  const isAwaitingReview = job.status === "awaiting_speaker_review";
+  const steps = isMultiSpeaker ? MULTI_SPEAKER_PROCESSING_STEPS : PROCESSING_STEPS;
+  const currentStepIndex = steps.findIndex((s) => s.id === job.status);
+  const avatarLabel = isMultiSpeaker
+    ? "Multiple people"
+    : AVATAR_CATEGORIES.find((c) => c.value === job.avatar_category)?.label ?? "—";
 
   return (
     <div className="min-h-screen bg-background">
@@ -120,15 +205,18 @@ export default function ProcessingPage() {
               <CheckCircle size={22} className="text-green-400" />
             ) : isError ? (
               <XCircle size={22} className="text-red-400" />
+            ) : isAwaitingReview ? (
+              <Users size={22} className="text-primary" />
             ) : (
               <Loader2 size={22} className="text-primary animate-spin" />
             )}
             <span className={`text-sm font-medium px-2.5 py-1 rounded-full ${
               isComplete ? "bg-green-400/10 text-green-400" :
               isError ? "bg-red-400/10 text-red-400" :
+              isAwaitingReview ? "bg-primary/10 text-primary" :
               "bg-primary/10 text-primary processing-pulse"
             }`}>
-              {isComplete ? "Complete" : isError ? "Failed" : "Processing"}
+              {isComplete ? "Complete" : isError ? "Failed" : isAwaitingReview ? "Awaiting Your Input" : "Processing"}
             </span>
           </div>
           <h1 className="font-display text-2xl font-700 mb-1 line-clamp-2">{job.title}</h1>
@@ -162,7 +250,7 @@ export default function ProcessingPage() {
           <div className="lg:col-span-2 glass-card rounded-2xl p-6">
             <h3 className="font-display font-600 text-sm mb-4">Pipeline Steps</h3>
             <div className="space-y-3">
-              {PROCESSING_STEPS.map((step, i) => {
+              {steps.map((step, i) => {
                 const isDone = isComplete || (!isError && i < currentStepIndex);
                 const isActive = !isComplete && !isError && i === currentStepIndex;
                 const isFailedHere = isError && i === currentStepIndex;
@@ -200,6 +288,80 @@ export default function ProcessingPage() {
 
           {/* Logs + Complete */}
           <div className="lg:col-span-3 space-y-4">
+            {isAwaitingReview && (
+              <div className="glass-card rounded-2xl p-6 border border-primary/20 bg-primary/5 slide-up">
+                <div className="flex items-center gap-3 mb-2">
+                  <Users size={22} className="text-primary" />
+                  <h3 className="font-display font-700 text-lg">Assign Avatars</h3>
+                </div>
+                <p className="text-sm text-muted-foreground mb-6">
+                  We detected {speakers.length} speaker{speakers.length === 1 ? "" : "s"} in your video. Choose an
+                  avatar for each before we continue.
+                </p>
+
+                {speakersLoading ? (
+                  <p className="text-sm text-muted-foreground">Loading detected speakers...</p>
+                ) : (
+                  <div className="space-y-5">
+                    {speakers.map((speaker) => (
+                      <div key={speaker.id} className="p-4 rounded-xl bg-muted/50 border border-white/5">
+                        <div className="flex items-start gap-3 mb-3">
+                          <div className="w-10 h-10 rounded-full bg-muted flex items-center justify-center flex-shrink-0">
+                            <User size={18} className="text-muted-foreground/50" />
+                          </div>
+                          <div className="min-w-0">
+                            <p className="font-display font-600 text-sm">{speaker.speaker_label}</p>
+                            {speakerPreviews[speaker.id] && (
+                              <p className="text-xs text-muted-foreground line-clamp-2 mt-0.5">
+                                "{speakerPreviews[speaker.id]}"
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
+                          {AVATAR_CATEGORIES.map((cat) => {
+                            const photoUrl = reviewAvatarPhotos[cat.value];
+                            const isSelected = assignments[speaker.id] === cat.value;
+                            return (
+                              <button
+                                key={cat.value}
+                                type="button"
+                                disabled={!photoUrl}
+                                onClick={() => setAssignments((prev) => ({ ...prev, [speaker.id]: cat.value }))}
+                                title={photoUrl ? cat.label : `${cat.label} — not uploaded`}
+                                className={`rounded-lg overflow-hidden border transition-all ${
+                                  !photoUrl ? "opacity-30 cursor-not-allowed border-white/10" :
+                                  isSelected ? "border-primary ring-2 ring-primary/30" :
+                                  "border-white/10 hover:border-white/20"
+                                }`}
+                              >
+                                <div className="aspect-square bg-muted flex items-center justify-center">
+                                  {photoUrl ? (
+                                    <img src={photoUrl} alt={cat.label} className="w-full h-full object-cover" />
+                                  ) : (
+                                    <User size={16} className="text-muted-foreground/30" />
+                                  )}
+                                </div>
+                                <p className="text-[10px] text-center py-1 truncate px-1">{cat.label}</p>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ))}
+
+                    <button
+                      onClick={handleSubmitAssignments}
+                      disabled={submittingAssignments || speakers.length === 0}
+                      className="w-full flex items-center justify-center gap-2 px-6 py-3 rounded-xl gradient-primary text-white font-semibold hover:opacity-90 transition-all disabled:opacity-60"
+                    >
+                      {submittingAssignments ? "Submitting..." : "Continue Processing"}
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+
             {isComplete && (
               <div className="glass-card rounded-2xl p-6 border border-green-400/20 bg-green-400/5 slide-up">
                 <div className="flex items-center gap-3 mb-4">

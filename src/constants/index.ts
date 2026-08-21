@@ -28,6 +28,21 @@ export const PROCESSING_STEPS: ProcessingStep[] = [
   { id: "rendering", label: "Rendering", description: "Final render and quality check", duration: 4000 },
 ];
 
+// multi_speaker pipeline only (see Phase 4 plan) -- diarizing/translating
+// replace transcribing+translating's single-avatar meaning, and
+// processing_segments covers TTS+face-swap+lip-sync for however many
+// segments the job has, so it doesn't map to one fixed duration the way
+// single_avatar's steps do.
+export const MULTI_SPEAKER_PROCESSING_STEPS: ProcessingStep[] = [
+  { id: "validating", label: "Validating Source", description: "Checking video accessibility and format", duration: 2000 },
+  { id: "extracting", label: "Preparing Video", description: "Handing your video to the AI", duration: 3000 },
+  { id: "diarizing", label: "Detecting Speakers", description: "Finding who speaks and when", duration: 6000 },
+  { id: "awaiting_speaker_review", label: "Your Review", description: "Waiting for you to assign avatars", duration: 0 },
+  { id: "translating", label: "Translating", description: "Translating each speaker's segments", duration: 4000 },
+  { id: "processing_segments", label: "Processing Segments", description: "Voice, face swap, and lip sync per speaker", duration: 8000 },
+  { id: "compositing", label: "Compositing", description: "Assembling the final video", duration: 5000 },
+];
+
 // v1 cap: keeps avatar/lip-sync render cost and turnaround low while the
 // real pipeline is being validated. Raise once proven reliable.
 export const MAX_UPLOAD_DURATION_SECONDS = 180;

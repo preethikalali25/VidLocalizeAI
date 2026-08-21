@@ -76,13 +76,16 @@ async function waitForFileActive(fileName: string, timeoutMs = 60_000): Promise<
   throw new Error(`Gemini file ${fileName} did not become ACTIVE within ${timeoutMs}ms`);
 }
 
-async function generateContent(parts: unknown[]): Promise<string> {
+async function generateContent(parts: unknown[], generationConfig?: Record<string, unknown>): Promise<string> {
   const res = await fetch(
     `${GEMINI_API_BASE}/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey()}`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ contents: [{ parts }] }),
+      body: JSON.stringify({
+        contents: [{ parts }],
+        ...(generationConfig ? { generationConfig } : {}),
+      }),
     }
   );
   if (!res.ok) {
@@ -102,6 +105,112 @@ export async function transcribeVideo(fileUri: string, mimeType: string, sourceL
         `Return only the transcript text, no timestamps, no speaker labels, no commentary.`,
     },
   ]);
+}
+
+export interface DiarizedSegment {
+  start_seconds: number;
+  end_seconds: number;
+  text: string;
+}
+export interface DiarizedSpeaker {
+  speaker_label: string;
+  segments: DiarizedSegment[];
+}
+
+// Multi-speaker pipeline only (see Phase 4 plan). Deliberately does NOT ask
+// Gemini to guess an avatar category for each speaker -- that's always a
+// human decision made in the awaiting_speaker_review review step, never an
+// ML guess, per the plan's reasoning: a wrong auto-guess produces a
+// silently wrong final video, discovered only after a full pipeline run.
+export async function diarizeVideo(
+  fileUri: string,
+  mimeType: string,
+  sourceLang: string
+): Promise<DiarizedSpeaker[]> {
+  const responseSchema = {
+    type: "OBJECT",
+    properties: {
+      speakers: {
+        type: "ARRAY",
+        items: {
+          type: "OBJECT",
+          properties: {
+            speaker_label: { type: "STRING" },
+            segments: {
+              type: "ARRAY",
+              items: {
+                type: "OBJECT",
+                properties: {
+                  start_seconds: { type: "NUMBER" },
+                  end_seconds: { type: "NUMBER" },
+                  text: { type: "STRING" },
+                },
+                required: ["start_seconds", "end_seconds", "text"],
+              },
+            },
+          },
+          required: ["speaker_label", "segments"],
+        },
+      },
+    },
+    required: ["speakers"],
+  };
+
+  const raw = await generateContent(
+    [
+      { file_data: { file_uri: fileUri, mime_type: mimeType } },
+      {
+        text:
+          `Identify each distinct person who speaks in this video. For each speaker, give a short ` +
+          `stable label (e.g. "Speaker 1") and a list of their speaking segments in chronological ` +
+          `order, each with a start time and end time in seconds (as numbers, from the start of the ` +
+          `video) and their speech transcribed verbatim in its original language (${sourceLang}). ` +
+          `Only include segments where that person is actually speaking. Do not guess or describe ` +
+          `who the speakers are -- only transcribe and time-stamp their speech.`,
+      },
+    ],
+    { responseMimeType: "application/json", responseSchema }
+  );
+
+  const parsed = JSON.parse(raw);
+  if (!Array.isArray(parsed.speakers)) throw new Error("Gemini diarization response missing speakers array");
+  return parsed.speakers;
+}
+
+// Multi-speaker pipeline only. Translates every segment's text in ONE call
+// (JSON array in, JSON array out) rather than one call per segment -- per
+// the Phase 4 plan, this preserves cross-speaker context (pronouns, names,
+// callbacks between speakers) and avoids a much larger number of Gemini
+// calls per job against an already free-tier-constrained quota.
+export async function translateSegments(texts: string[], targetLanguage: string): Promise<string[]> {
+  const responseSchema = {
+    type: "OBJECT",
+    properties: {
+      translations: { type: "ARRAY", items: { type: "STRING" } },
+    },
+    required: ["translations"],
+  };
+
+  const raw = await generateContent(
+    [
+      {
+        text:
+          `Translate each of the following ${texts.length} speech segments into ${targetLanguage}, written ` +
+          `for a voice actor to read aloud naturally (not stiff literal translation). Segments are numbered ` +
+          `in chronological speaking order and may be from different speakers -- keep pronouns, names, and ` +
+          `references between segments consistent. Return exactly ${texts.length} translations, in the same ` +
+          `order, as a JSON array of strings.\n\n` +
+          texts.map((t, i) => `${i + 1}. ${t}`).join("\n"),
+      },
+    ],
+    { responseMimeType: "application/json", responseSchema }
+  );
+
+  const parsed = JSON.parse(raw);
+  if (!Array.isArray(parsed.translations) || parsed.translations.length !== texts.length) {
+    throw new Error(`Gemini returned ${parsed.translations?.length ?? 0} translations, expected ${texts.length}`);
+  }
+  return parsed.translations;
 }
 
 export async function translateText(text: string, targetLanguage: string): Promise<string> {

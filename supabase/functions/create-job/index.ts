@@ -11,7 +11,8 @@ interface CreateJobBody {
   title: string;
   sourceLang: string;
   targetLanguage: string;
-  avatarCategory: string;
+  pipelineMode?: string;
+  avatarCategory?: string;
   sourceStoragePath: string;
   sourceFileName?: string;
   sourceDurationSeconds?: number;
@@ -49,7 +50,8 @@ Deno.serve(async (req: Request) => {
   if (!ALLOWED_TARGET_LANGUAGES.includes(body.targetLanguage)) {
     return badRequest(`targetLanguage must be one of ${ALLOWED_TARGET_LANGUAGES.join(", ")}`);
   }
-  if (!ALLOWED_AVATAR_CATEGORIES.includes(body.avatarCategory)) {
+  const pipelineMode = body.pipelineMode === "multi_speaker" ? "multi_speaker" : "single_avatar";
+  if (pipelineMode === "single_avatar" && !ALLOWED_AVATAR_CATEGORIES.includes(body.avatarCategory ?? "")) {
     return badRequest(`avatarCategory must be one of ${ALLOWED_AVATAR_CATEGORIES.join(", ")}`);
   }
   if (body.sourceDurationSeconds && body.sourceDurationSeconds > MAX_UPLOAD_DURATION_SECONDS) {
@@ -72,21 +74,25 @@ Deno.serve(async (req: Request) => {
   const admin = getSupabaseAdmin();
 
   // Fail fast with a clear message instead of creating a job that's
-  // guaranteed to fail three stages later at generating_avatar.
-  const { data: avatarPhoto, error: avatarPhotoError } = await admin
-    .from("avatar_photos")
-    .select("category")
-    .eq("user_id", userId)
-    .eq("category", body.avatarCategory)
-    .maybeSingle();
-  if (avatarPhotoError) {
-    return new Response(JSON.stringify({ error: avatarPhotoError.message }), {
-      status: 500,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
-  }
-  if (!avatarPhoto) {
-    return badRequest(`No avatar photo uploaded for "${body.avatarCategory}" -- upload one on the Avatars page first`);
+  // guaranteed to fail three stages later at generating_avatar. Skipped
+  // for multi_speaker jobs -- no category is chosen at creation time, this
+  // same check happens per-speaker instead in submit-speaker-assignments.
+  if (pipelineMode === "single_avatar") {
+    const { data: avatarPhoto, error: avatarPhotoError } = await admin
+      .from("avatar_photos")
+      .select("category")
+      .eq("user_id", userId)
+      .eq("category", body.avatarCategory)
+      .maybeSingle();
+    if (avatarPhotoError) {
+      return new Response(JSON.stringify({ error: avatarPhotoError.message }), {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    if (!avatarPhoto) {
+      return badRequest(`No avatar photo uploaded for "${body.avatarCategory}" -- upload one on the Avatars page first`);
+    }
   }
 
   const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
@@ -117,7 +123,8 @@ Deno.serve(async (req: Request) => {
       title: body.title,
       source_lang: body.sourceLang,
       target_language: body.targetLanguage,
-      avatar_category: body.avatarCategory,
+      pipeline_mode: pipelineMode,
+      avatar_category: pipelineMode === "single_avatar" ? body.avatarCategory : null,
       input_method: "upload",
       source_storage_path: body.sourceStoragePath,
       source_file_name: body.sourceFileName ?? null,

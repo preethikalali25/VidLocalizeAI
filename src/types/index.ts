@@ -9,7 +9,12 @@ export type ProcessingStatus =
   | "lip_syncing"
   | "rendering"
   | "complete"
-  | "error";
+  | "error"
+  // multi_speaker pipeline only (see Phase 4 plan)
+  | "diarizing"
+  | "awaiting_speaker_review"
+  | "processing_segments"
+  | "compositing";
 
 export type Language = "hindi" | "telugu" | "tamil" | "kannada" | "bengali";
 export type AvatarCategory = "man" | "woman" | "boy_child" | "girl_child" | "old_man" | "old_woman";
@@ -30,7 +35,8 @@ export interface JobRecord {
   title: string;
   source_lang: string;
   target_language: Language;
-  avatar_category: AvatarCategory;
+  avatar_category: AvatarCategory | null;
+  pipeline_mode: "single_avatar" | "multi_speaker";
   status: ProcessingStatus;
   progress: number;
   source_duration_seconds: number | null;
@@ -56,4 +62,25 @@ export interface AvatarPhotoRecord {
   category: AvatarCategory;
   storage_path: string;
   updated_at: string;
+}
+
+// multi_speaker pipeline only (see Phase 4 plan). Shape of a row from the
+// `job_speakers` table.
+export interface JobSpeakerRecord {
+  id: string;
+  job_id: string;
+  speaker_label: string;
+  representative_frame_storage_path: string | null;
+  avatar_category: AvatarCategory | null;
+}
+
+// multi_speaker pipeline only. Shape of a row from the `job_segments`
+// table -- ProcessingPage only needs a few fields (a text preview per
+// speaker for the review screen), not the full pipeline-internal shape.
+export interface JobSegmentRecord {
+  id: string;
+  speaker_id: string;
+  sequence_index: number;
+  source_text: string | null;
+  status: "pending_tts" | "pending_faceswap" | "pending_lipsync" | "ready" | "failed";
 }

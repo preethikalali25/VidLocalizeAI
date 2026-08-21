@@ -1,0 +1,97 @@
+import type { SupabaseClient } from "npm:@supabase/supabase-js@2";
+import { diarizeVideo, type DiarizedSpeaker } from "../../_shared/gemini.ts";
+import type { JobRow, StageResult } from "../types.ts";
+
+// KNOWN GAP: job_speakers.representative_frame_storage_path is never set
+// here -- extracting a still frame at a given timestamp is a video
+// operation Edge Functions can't do (same reason the compositing stage
+// needs its own dedicated container, see the Phase 4 plan). The speaker
+// review screen must work with representative_frame_storage_path == null
+// (fall back to the speaker's label/transcript snippet only) until that
+// container exists and a frame-extraction call is wired in here as a
+// follow-up.
+//
+// v1 cap (see Phase 4 plan) -- extra detected speakers beyond this are
+// simply never persisted as job_speakers/job_segments rows, so the
+// compositing stage has nothing queued for their time ranges and those
+// ranges keep the original, untouched footage. Graceful degrade, not a
+// hard failure.
+const MAX_SPEAKERS = 3;
+
+export async function runDiarizing(admin: SupabaseClient, job: JobRow): Promise<StageResult> {
+  if (!job.gemini_file_uri) throw new Error("Missing gemini_file_uri going into diarizing stage");
+
+  // Idempotency guard: if a retry re-enters this stage after a prior
+  // attempt already inserted rows (e.g. the Gemini call succeeded but a
+  // later insert or the jobs update failed), don't call Gemini and insert
+  // duplicates -- just resume from what's already there. Mirrors the same
+  // pattern generating_avatar.ts uses for its Replicate prediction.
+  const { data: existingSpeakers, error: existingError } = await admin
+    .from("job_speakers")
+    .select("id")
+    .eq("job_id", job.id)
+    .limit(1);
+  if (existingError) throw new Error(`Failed to check for existing speakers: ${existingError.message}`);
+
+  if (!existingSpeakers || existingSpeakers.length === 0) {
+    const detected = await diarizeVideo(job.gemini_file_uri, job.source_mime_type ?? "video/mp4", job.source_lang);
+    const kept = capToTopSpeakers(detected, MAX_SPEAKERS);
+
+    for (const speaker of kept) {
+      const { data: speakerRow, error: speakerError } = await admin
+        .from("job_speakers")
+        .insert({ job_id: job.id, speaker_label: speaker.speaker_label })
+        .select("id")
+        .single();
+      if (speakerError || !speakerRow) {
+        throw new Error(`Failed to save speaker "${speaker.speaker_label}": ${speakerError?.message ?? "no row returned"}`);
+      }
+
+      const segmentRows = speaker.segments.map((seg) => ({
+        job_id: job.id,
+        speaker_id: speakerRow.id,
+        start_seconds: seg.start_seconds,
+        end_seconds: seg.end_seconds,
+        source_text: seg.text,
+        // Backfilled below once every speaker's segments are known, so
+        // sequence_index reflects chronological order across ALL speakers,
+        // not just within one speaker.
+        sequence_index: 0,
+      }));
+      if (segmentRows.length > 0) {
+        const { error: segmentsError } = await admin.from("job_segments").insert(segmentRows);
+        if (segmentsError) throw new Error(`Failed to save segments for "${speaker.speaker_label}": ${segmentsError.message}`);
+      }
+    }
+
+    await assignChronologicalSequenceIndexes(admin, job.id);
+  }
+
+  return {
+    status: "awaiting_speaker_review",
+    progress: 35,
+    logMessage: "Detected speakers -- waiting for you to assign avatars.",
+  };
+}
+
+function capToTopSpeakers(speakers: DiarizedSpeaker[], max: number): DiarizedSpeaker[] {
+  if (speakers.length <= max) return speakers;
+  const totalDuration = (s: DiarizedSpeaker) =>
+    s.segments.reduce((sum, seg) => sum + (seg.end_seconds - seg.start_seconds), 0);
+  return [...speakers].sort((a, b) => totalDuration(b) - totalDuration(a)).slice(0, max);
+}
+
+async function assignChronologicalSequenceIndexes(admin: SupabaseClient, jobId: string): Promise<void> {
+  const { data: segments, error } = await admin
+    .from("job_segments")
+    .select("id, start_seconds")
+    .eq("job_id", jobId)
+    .order("start_seconds", { ascending: true });
+  if (error) throw new Error(`Failed to load segments for sequencing: ${error.message}`);
+
+  await Promise.all(
+    (segments ?? []).map((seg: { id: string }, index: number) =>
+      admin.from("job_segments").update({ sequence_index: index }).eq("id", seg.id)
+    )
+  );
+}

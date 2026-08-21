@@ -9,6 +9,9 @@ import { runSynthesizingSpeech } from "./stages/synthesizing_speech.ts";
 import { runGeneratingAvatar } from "./stages/generating_avatar.ts";
 import { runLipSyncing } from "./stages/lip_syncing.ts";
 import { runRendering } from "./stages/rendering.ts";
+import { runDiarizing } from "./stages/diarizing.ts";
+import { runProcessingSegments } from "./stages/processing_segments.ts";
+import { runCompositing } from "./stages/compositing.ts";
 
 const MAX_RETRIES = 3;
 const STALE_AFTER_SECONDS = 15;
@@ -17,8 +20,11 @@ const MAX_JOBS_PER_SWEEP = 5;
 // deno-lint-ignore no-explicit-any
 type Admin = any;
 
+// awaiting_speaker_review is deliberately excluded: it's the one status
+// that never auto-advances on a tick. Only submit-speaker-assignments is
+// allowed to move a job out of it (see the Phase 4 plan).
 const STAGE_HANDLERS: Record<
-  Exclude<JobStatus, "complete" | "error">,
+  Exclude<JobStatus, "complete" | "error" | "awaiting_speaker_review">,
   (admin: Admin, job: JobRow) => Promise<StageResult>
 > = {
   validating: runValidating,
@@ -29,6 +35,9 @@ const STAGE_HANDLERS: Record<
   generating_avatar: runGeneratingAvatar,
   lip_syncing: runLipSyncing,
   rendering: runRendering,
+  diarizing: runDiarizing,
+  processing_segments: runProcessingSegments,
+  compositing: runCompositing,
 };
 
 async function advanceOneJob(admin: Admin, job: JobRow): Promise<void> {
@@ -104,14 +113,16 @@ Deno.serve(async (req: Request) => {
     });
   }
 
-  // Cron sweep: pick up any non-terminal job that hasn't been touched
-  // recently (avoids double-processing a job that's already mid-tick from
-  // the direct create-job kick).
+  // Cron sweep: pick up any non-terminal, auto-advanceable job that hasn't
+  // been touched recently (avoids double-processing a job that's already
+  // mid-tick from the direct create-job kick). awaiting_speaker_review is
+  // excluded on purpose -- it's paused for human input, not stalled; only
+  // submit-speaker-assignments is allowed to move it forward.
   const staleCutoff = new Date(Date.now() - STALE_AFTER_SECONDS * 1000).toISOString();
   const { data: jobs, error } = await admin
     .from("jobs")
     .select("*")
-    .not("status", "in", "(complete,error)")
+    .not("status", "in", "(complete,error,awaiting_speaker_review)")
     .lt("last_advanced_at", staleCutoff)
     .order("last_advanced_at", { ascending: true })
     .limit(MAX_JOBS_PER_SWEEP);

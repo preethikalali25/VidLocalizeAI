@@ -83,7 +83,8 @@ export async function logEvent(
   jobId: string,
   stage: string,
   message: string,
-  level: "info" | "error" = "info"
+  level: "info" | "error" = "info",
+  segmentId?: string
 ): Promise<void> {
-  await admin.from("job_events").insert({ job_id: jobId, stage, level, message });
+  await admin.from("job_events").insert({ job_id: jobId, stage, level, message, segment_id: segmentId ?? null });
 }

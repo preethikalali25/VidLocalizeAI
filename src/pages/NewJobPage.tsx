@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { Link2, Upload, ChevronRight, Info, X, Film, Lock, User } from "lucide-react";
+import { Link2, Upload, ChevronRight, Info, X, Film, Lock, User, Users } from "lucide-react";
 import { toast } from "sonner";
 import Navbar from "@/components/layout/Navbar";
 import { LANGUAGES, AVATAR_CATEGORIES, SOURCE_LANGUAGES, MAX_UPLOAD_DURATION_SECONDS, MAX_UPLOAD_SIZE_MB } from "@/constants";
@@ -61,6 +61,12 @@ export default function NewJobPage() {
 
   // Step 3 -- avatar photos are uploaded once on the /avatars page and
   // reused here; this page only fetches and selects, it doesn't upload.
+  //
+  // multi_speaker (Phase 4): no avatar is chosen here at all -- the
+  // pipeline detects who's in the video first, then a review step (on
+  // ProcessingPage) is where each detected speaker gets assigned one of
+  // the uploaded avatar categories. See the Phase 4 plan.
+  const [pipelineMode, setPipelineMode] = useState<"single_avatar" | "multi_speaker">("single_avatar");
   const [selectedCategory, setSelectedCategory] = useState<AvatarCategory | null>(null);
   const [avatarPhotos, setAvatarPhotos] = useState<Record<AvatarCategory, string | null>>(emptyAvatarPhotos());
   const [avatarPhotosLoading, setAvatarPhotosLoading] = useState(true);
@@ -125,7 +131,7 @@ export default function NewJobPage() {
   };
 
   const validateStep3 = () => {
-    if (!selectedCategory) {
+    if (pipelineMode === "single_avatar" && !selectedCategory) {
       toast.error("Please choose an avatar");
       return false;
     }
@@ -147,7 +153,7 @@ export default function NewJobPage() {
       toast.error("Please upload a video file");
       return;
     }
-    if (!selectedCategory) {
+    if (pipelineMode === "single_avatar" && !selectedCategory) {
       toast.error("Please choose an avatar");
       return;
     }
@@ -172,7 +178,8 @@ export default function NewJobPage() {
           title,
           sourceLang,
           targetLanguage: targetLang,
-          avatarCategory: selectedCategory,
+          pipelineMode,
+          avatarCategory: pipelineMode === "single_avatar" ? selectedCategory : undefined,
           sourceStoragePath: storagePath,
           sourceFileName: uploadedFile.name,
           sourceDurationSeconds: videoDurationSeconds,
@@ -351,7 +358,46 @@ export default function NewJobPage() {
             <h2 className="font-display text-xl font-600 mb-2">Choose AI Avatar</h2>
             <p className="text-muted-foreground text-sm mb-8">Select the presenter for your localized video</p>
 
-            {avatarPhotosLoading ? (
+            <div className="grid sm:grid-cols-2 gap-3 mb-8">
+              <button
+                type="button"
+                onClick={() => setPipelineMode("single_avatar")}
+                className={`flex items-start gap-3 p-4 rounded-xl border text-left transition-all ${
+                  pipelineMode === "single_avatar" ? "border-primary bg-primary/10" : "border-white/10 hover:border-white/20"
+                }`}
+              >
+                <User size={18} className={pipelineMode === "single_avatar" ? "text-primary" : "text-muted-foreground"} />
+                <div>
+                  <p className="font-display font-600 text-sm">One presenter</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">Your chosen avatar narrates the whole translated video.</p>
+                </div>
+              </button>
+              <button
+                type="button"
+                onClick={() => setPipelineMode("multi_speaker")}
+                className={`flex items-start gap-3 p-4 rounded-xl border text-left transition-all ${
+                  pipelineMode === "multi_speaker" ? "border-primary bg-primary/10" : "border-white/10 hover:border-white/20"
+                }`}
+              >
+                <Users size={18} className={pipelineMode === "multi_speaker" ? "text-primary" : "text-muted-foreground"} />
+                <div>
+                  <p className="font-display font-600 text-sm">Multiple people <span className="text-primary/80">(beta)</span></p>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    We detect each person who speaks; you'll assign an avatar to each of them after upload.
+                  </p>
+                </div>
+              </button>
+            </div>
+
+            {pipelineMode === "multi_speaker" ? (
+              <div className="flex items-start gap-3 p-4 rounded-xl bg-primary/5 border border-primary/20">
+                <Info size={16} className="text-primary mt-0.5 flex-shrink-0" />
+                <p className="text-sm text-muted-foreground">
+                  After you submit, we'll detect who speaks in your video. You'll be asked to pick an avatar for
+                  each person before processing continues — no need to choose one now.
+                </p>
+              </div>
+            ) : avatarPhotosLoading ? (
               <p className="text-sm text-muted-foreground">Loading your avatars...</p>
             ) : (
               <>
@@ -427,7 +473,10 @@ export default function NewJobPage() {
                 },
                 {
                   label: "AI Avatar",
-                  value: AVATAR_CATEGORIES.find((c) => c.value === selectedCategory)?.label || "",
+                  value:
+                    pipelineMode === "multi_speaker"
+                      ? "Multiple people — assigned after upload"
+                      : AVATAR_CATEGORIES.find((c) => c.value === selectedCategory)?.label || "",
                 },
               ].map((row) => (
                 <div key={row.label} className="flex gap-4 p-4 rounded-xl bg-muted/50">
