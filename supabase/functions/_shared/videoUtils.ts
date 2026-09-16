@@ -82,6 +82,20 @@ export interface ReplacementSegment {
   clip_url: string;
 }
 
+// Downloads a YouTube video (via yt-dlp inside the container -- see its
+// README for the legal-gray-area note) and returns it as an mp4. A single
+// blocking call, same timeout caveat as compositeVideo below: if this
+// starts timing out on longer videos in practice, the container's
+// contract would need to change to an async start+poll shape.
+export async function fetchYoutubeVideo(youtubeUrl: string): Promise<{ bytes: Uint8Array; contentType: string }> {
+  const res = await fetch(`${baseUrl()}/fetch-youtube`, {
+    method: "POST",
+    headers: authHeaders(),
+    body: JSON.stringify({ youtube_url: youtubeUrl }),
+  });
+  return readVideoResponse(res, "fetch-youtube");
+}
+
 // Final assembly: splices each replacement clip into the original video at
 // its time range (ranges with no replacement segment queued -- e.g.
 // speakers dropped by the MAX_SPEAKERS cap, or overlapping-speech ranges,

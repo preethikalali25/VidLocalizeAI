@@ -13,7 +13,9 @@ interface CreateJobBody {
   targetLanguage: string;
   pipelineMode?: string;
   avatarCategory?: string;
-  sourceStoragePath: string;
+  inputMethod?: string;
+  sourceStoragePath?: string;
+  sourceYoutubeUrl?: string;
   sourceFileName?: string;
   sourceDurationSeconds?: number;
   sourceSizeBytes?: number;
@@ -24,6 +26,15 @@ function badRequest(message: string): Response {
     status: 400,
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
+}
+
+function isYoutubeUrl(url: string): boolean {
+  try {
+    const { hostname } = new URL(url);
+    return /(^|\.)(youtube\.com|youtu\.be)$/.test(hostname);
+  } catch {
+    return false;
+  }
 }
 
 Deno.serve(async (req: Request) => {
@@ -44,21 +55,36 @@ Deno.serve(async (req: Request) => {
     return badRequest("invalid JSON body");
   }
 
-  if (!body.title || !body.sourceLang || !body.sourceStoragePath) {
-    return badRequest("title, sourceLang, and sourceStoragePath are required");
+  if (!body.title || !body.sourceLang) {
+    return badRequest("title and sourceLang are required");
   }
   if (!ALLOWED_TARGET_LANGUAGES.includes(body.targetLanguage)) {
     return badRequest(`targetLanguage must be one of ${ALLOWED_TARGET_LANGUAGES.join(", ")}`);
   }
+
+  const inputMethod = body.inputMethod === "youtube" ? "youtube" : "upload";
+  if (inputMethod === "upload" && !body.sourceStoragePath) {
+    return badRequest("sourceStoragePath is required for upload jobs");
+  }
+  if (inputMethod === "youtube" && (!body.sourceYoutubeUrl || !isYoutubeUrl(body.sourceYoutubeUrl))) {
+    return badRequest("sourceYoutubeUrl is required and must be a youtube.com/youtu.be URL");
+  }
+
   const pipelineMode = body.pipelineMode === "multi_speaker" ? "multi_speaker" : "single_avatar";
   if (pipelineMode === "single_avatar" && !ALLOWED_AVATAR_CATEGORIES.includes(body.avatarCategory ?? "")) {
     return badRequest(`avatarCategory must be one of ${ALLOWED_AVATAR_CATEGORIES.join(", ")}`);
   }
-  if (body.sourceDurationSeconds && body.sourceDurationSeconds > MAX_UPLOAD_DURATION_SECONDS) {
-    return badRequest(`video duration exceeds the ${MAX_UPLOAD_DURATION_SECONDS}s v1 cap`);
-  }
-  if (body.sourceSizeBytes && body.sourceSizeBytes > MAX_UPLOAD_SIZE_MB * 1024 * 1024) {
-    return badRequest(`video size exceeds the ${MAX_UPLOAD_SIZE_MB}MB v1 cap`);
+  // Duration/size are only known upfront for direct uploads (the browser
+  // read them before calling this function) -- youtube jobs are checked
+  // server-side instead, by the video-utils container before it downloads
+  // anything (see fetching_source.ts / video-utils-container/server.js).
+  if (inputMethod === "upload") {
+    if (body.sourceDurationSeconds && body.sourceDurationSeconds > MAX_UPLOAD_DURATION_SECONDS) {
+      return badRequest(`video duration exceeds the ${MAX_UPLOAD_DURATION_SECONDS}s v1 cap`);
+    }
+    if (body.sourceSizeBytes && body.sourceSizeBytes > MAX_UPLOAD_SIZE_MB * 1024 * 1024) {
+      return badRequest(`video size exceeds the ${MAX_UPLOAD_SIZE_MB}MB v1 cap`);
+    }
   }
 
   const userClient = getSupabaseForRequest(req);
@@ -125,8 +151,14 @@ Deno.serve(async (req: Request) => {
       target_language: body.targetLanguage,
       pipeline_mode: pipelineMode,
       avatar_category: pipelineMode === "single_avatar" ? body.avatarCategory : null,
-      input_method: "upload",
-      source_storage_path: body.sourceStoragePath,
+      input_method: inputMethod,
+      // fetching_source (youtube jobs only) populates source_storage_path
+      // itself once it downloads the video -- null here is intentional,
+      // not a bug, same as it starting null for multi_speaker's
+      // avatar_category.
+      status: inputMethod === "youtube" ? "fetching_source" : "validating",
+      source_storage_path: inputMethod === "upload" ? body.sourceStoragePath : null,
+      source_youtube_url: inputMethod === "youtube" ? body.sourceYoutubeUrl : null,
       source_file_name: body.sourceFileName ?? null,
       source_duration_seconds: body.sourceDurationSeconds ?? null,
       source_size_bytes: body.sourceSizeBytes ?? null,

@@ -66,6 +66,36 @@ async function downloadToFile(url, destPath) {
   await fs.writeFile(destPath, buffer);
 }
 
+// Mirrors MAX_UPLOAD_DURATION_SECONDS in src/constants/index.ts and
+// supabase/functions/create-job/index.ts -- this is a separate JS runtime
+// (Node here vs. Deno in the Edge Functions) with no shared import
+// mechanism between them, so it's a second copy, not a shared constant.
+// Keep all three in sync if the cap ever changes.
+const MAX_YOUTUBE_DURATION_SECONDS = 180;
+
+// Restricts this endpoint to actual YouTube URLs, even though yt-dlp
+// itself supports hundreds of sites -- this container has no access
+// control beyond the bearer secret, and there's no reason to let it act
+// as a general-purpose URL-fetching proxy for whatever site a caller
+// names.
+function isYoutubeUrl(url) {
+  try {
+    const { hostname } = new URL(url);
+    return /(^|\.)(youtube\.com|youtu\.be)$/.test(hostname);
+  } catch {
+    return false;
+  }
+}
+
+function runYtDlp(args, maxBuffer = 1024 * 1024 * 20) {
+  return new Promise((resolve, reject) => {
+    execFile("yt-dlp", args, { maxBuffer }, (err, stdout, stderr) => {
+      if (err) return reject(new Error(`yt-dlp failed: ${err.message}\n${stderr}`));
+      resolve(stdout);
+    });
+  });
+}
+
 function tempPath(suffix) {
   return path.join(os.tmpdir(), `vu-${crypto.randomUUID()}${suffix}`);
 }
@@ -196,6 +226,58 @@ app.post("/composite", async (req, res) => {
     res.status(500).json({ error: String(err.message || err) });
   } finally {
     await cleanup([src, out, concatListPath, ...pieceFiles, ...clipFiles]);
+  }
+});
+
+// POST /fetch-youtube { youtube_url } -> video/mp4 bytes
+//
+// Checks the video's duration via --dump-json (no download) first and
+// rejects anything over the cap before spending any bandwidth on it --
+// same "fail fast" reasoning as create-job's other pre-checks.
+app.post("/fetch-youtube", async (req, res) => {
+  const { youtube_url } = req.body || {};
+  if (!youtube_url || !isYoutubeUrl(youtube_url)) {
+    return res.status(400).json({ error: "youtube_url is required and must be a youtube.com/youtu.be URL" });
+  }
+
+  const out = tempPath(".mp4");
+  try {
+    let meta;
+    try {
+      const raw = await runYtDlp(["--dump-json", "--no-warnings", "--skip-download", youtube_url]);
+      meta = JSON.parse(raw);
+    } catch (err) {
+      // Surfaced as-is -- yt-dlp's own error text already explains private/
+      // age-restricted/region-locked/deleted videos clearly.
+      throw new Error(`Could not read video info: ${err.message}`);
+    }
+    if (typeof meta.duration === "number" && meta.duration > MAX_YOUTUBE_DURATION_SECONDS) {
+      return res.status(400).json({
+        error: `Video is ${Math.round(meta.duration)}s, which exceeds the ${MAX_YOUTUBE_DURATION_SECONDS}s cap`,
+      });
+    }
+
+    // Capped to 720p to keep downloads/uploads reasonably fast -- this is
+    // a presenter-narration/dubbing pipeline, not a video archive, so
+    // source resolution beyond this doesn't meaningfully help the output.
+    await runYtDlp(
+      [
+        "-f", "bestvideo[height<=720]+bestaudio/best[height<=720]/best",
+        "--merge-output-format", "mp4",
+        "--no-warnings",
+        "--no-playlist",
+        "-o", out,
+        youtube_url,
+      ],
+      1024 * 1024 * 20
+    );
+
+    const bytes = await fs.readFile(out);
+    res.type("video/mp4").send(bytes);
+  } catch (err) {
+    res.status(500).json({ error: String(err.message || err) });
+  } finally {
+    await cleanup([out]);
   }
 });
 

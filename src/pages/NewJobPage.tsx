@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { Link2, Upload, ChevronRight, Info, X, Film, Lock, User, Users } from "lucide-react";
+import { Link2, Upload, ChevronRight, Info, Film, User, Users } from "lucide-react";
 import { toast } from "sonner";
 import Navbar from "@/components/layout/Navbar";
 import { LANGUAGES, AVATAR_CATEGORIES, SOURCE_LANGUAGES, MAX_UPLOAD_DURATION_SECONDS, MAX_UPLOAD_SIZE_MB } from "@/constants";
@@ -22,6 +22,28 @@ function generateUploadId(): string {
 
 function emptyAvatarPhotos(): Record<AvatarCategory, string | null> {
   return Object.fromEntries(AVATAR_CATEGORIES.map((c) => [c.value, null])) as Record<AvatarCategory, string | null>;
+}
+
+function isYoutubeUrl(url: string): boolean {
+  try {
+    const { hostname } = new URL(url);
+    return /(^|\.)(youtube\.com|youtu\.be)$/.test(hostname);
+  } catch {
+    return false;
+  }
+}
+
+// YouTube's oEmbed endpoint is public and keyless -- just a nicer job
+// title than a generic fallback, not required for the job to work.
+async function fetchYoutubeTitle(url: string): Promise<string | null> {
+  try {
+    const res = await fetch(`https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    return typeof data.title === "string" ? data.title : null;
+  } catch {
+    return null;
+  }
 }
 
 function readVideoDurationSeconds(file: File): Promise<number> {
@@ -46,13 +68,14 @@ export default function NewJobPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitStage, setSubmitStage] = useState<"uploading" | "creating" | null>(null);
 
-  // Step 1 -- YouTube URL ingestion isn't supported for real processing yet
-  // (no way to fetch a YouTube video from inside a Supabase Edge Function),
-  // so upload is the only working input method. The URL tab stays visible
-  // but disabled rather than removed, so it's clear it's coming later.
+  // Step 1 -- YouTube fetching happens server-side via the video-utils
+  // container (yt-dlp), see fetching_source.ts. Duration/size are checked
+  // there before download rather than client-side here, since there's no
+  // File object to read metadata from for a URL.
   const [inputMethod, setInputMethod] = useState<InputMethod>("upload");
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [videoDurationSeconds, setVideoDurationSeconds] = useState<number | null>(null);
+  const [youtubeUrl, setYoutubeUrl] = useState("");
   const [sourceLang, setSourceLang] = useState("chinese");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -123,6 +146,13 @@ export default function NewJobPage() {
   };
 
   const validateStep1 = () => {
+    if (inputMethod === "url") {
+      if (!youtubeUrl || !isYoutubeUrl(youtubeUrl)) {
+        toast.error("Please enter a valid youtube.com or youtu.be URL");
+        return false;
+      }
+      return true;
+    }
     if (!uploadedFile) {
       toast.error("Please upload a video file");
       return false;
@@ -149,8 +179,8 @@ export default function NewJobPage() {
       toast.error("Real processing isn't set up yet — this build has no Supabase project configured.");
       return;
     }
-    if (!uploadedFile) {
-      toast.error("Please upload a video file");
+    if (inputMethod === "url" ? !youtubeUrl || !isYoutubeUrl(youtubeUrl) : !uploadedFile) {
+      toast.error(inputMethod === "url" ? "Please enter a valid YouTube URL" : "Please upload a video file");
       return;
     }
     if (pipelineMode === "single_avatar" && !selectedCategory) {
@@ -163,29 +193,44 @@ export default function NewJobPage() {
       const session = await ensureAnonymousSession();
       if (!session) throw new Error("Couldn't start a session — check Supabase Anonymous sign-ins are enabled");
 
-      setSubmitStage("uploading");
-      const uploadId = generateUploadId();
-      const storagePath = `${session.user.id}/${uploadId}/${uploadedFile.name}`;
-      const { error: uploadError } = await supabase.storage
-        .from("job-assets")
-        .upload(storagePath, uploadedFile, { contentType: uploadedFile.type });
-      if (uploadError) throw new Error(`Upload failed: ${uploadError.message}`);
-
-      setSubmitStage("creating");
-      const title = uploadedFile.name.replace(/\.[^.]+$/, "");
-      const { data, error: fnError } = await supabase.functions.invoke("create-job", {
-        body: {
+      let createJobBody: Record<string, unknown>;
+      if (inputMethod === "url") {
+        setSubmitStage("creating");
+        const title = (await fetchYoutubeTitle(youtubeUrl)) ?? "YouTube Video";
+        createJobBody = {
           title,
           sourceLang,
           targetLanguage: targetLang,
           pipelineMode,
           avatarCategory: pipelineMode === "single_avatar" ? selectedCategory : undefined,
+          inputMethod: "youtube",
+          sourceYoutubeUrl: youtubeUrl,
+        };
+      } else {
+        setSubmitStage("uploading");
+        const uploadId = generateUploadId();
+        const storagePath = `${session.user.id}/${uploadId}/${uploadedFile!.name}`;
+        const { error: uploadError } = await supabase.storage
+          .from("job-assets")
+          .upload(storagePath, uploadedFile!, { contentType: uploadedFile!.type });
+        if (uploadError) throw new Error(`Upload failed: ${uploadError.message}`);
+
+        setSubmitStage("creating");
+        createJobBody = {
+          title: uploadedFile!.name.replace(/\.[^.]+$/, ""),
+          sourceLang,
+          targetLanguage: targetLang,
+          pipelineMode,
+          avatarCategory: pipelineMode === "single_avatar" ? selectedCategory : undefined,
+          inputMethod: "upload",
           sourceStoragePath: storagePath,
-          sourceFileName: uploadedFile.name,
+          sourceFileName: uploadedFile!.name,
           sourceDurationSeconds: videoDurationSeconds,
-          sourceSizeBytes: uploadedFile.size,
-        },
-      });
+          sourceSizeBytes: uploadedFile!.size,
+        };
+      }
+
+      const { data, error: fnError } = await supabase.functions.invoke("create-job", { body: createJobBody });
       if (fnError) throw new Error(fnError.message);
       if (!data?.id) throw new Error("create-job did not return a job id");
 
@@ -245,13 +290,13 @@ export default function NewJobPage() {
             {/* Input method toggle */}
             <div className="flex rounded-xl overflow-hidden border border-white/10 mb-8 w-fit">
               <button
-                disabled
-                title="Coming soon — upload a file for now"
-                className="flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-muted-foreground/50 cursor-not-allowed"
+                onClick={() => setInputMethod("url")}
+                className={`flex items-center gap-2 px-5 py-2.5 text-sm font-medium transition-all ${
+                  inputMethod === "url" ? "gradient-primary text-white" : "text-muted-foreground hover:text-foreground"
+                }`}
               >
                 <Link2 size={14} />
                 YouTube URL
-                <Lock size={11} />
               </button>
               <button
                 onClick={() => setInputMethod("upload")}
@@ -263,40 +308,53 @@ export default function NewJobPage() {
                 Upload File
               </button>
             </div>
-            <p className="flex items-center gap-1 text-xs text-muted-foreground -mt-6 mb-6">
-              <Info size={11} /> YouTube URL processing is coming soon — upload a short clip for now
-            </p>
 
-            <div className="mb-6">
-              <label className="block text-sm font-medium mb-2 text-muted-foreground">Video File</label>
-              <label className="flex flex-col items-center justify-center w-full h-40 border-2 border-dashed border-white/10 rounded-xl cursor-pointer hover:border-primary/40 hover:bg-primary/5 transition-all">
-                {uploadedFile ? (
-                  <div className="text-center">
-                    <Film size={28} className="text-primary mx-auto mb-2" />
-                    <p className="font-medium text-sm">{uploadedFile.name}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {(uploadedFile.size / 1024 / 1024).toFixed(1)} MB
-                      {videoDurationSeconds ? ` · ${Math.round(videoDurationSeconds)}s` : ""}
-                    </p>
-                  </div>
-                ) : (
-                  <div className="text-center">
-                    <Upload size={28} className="text-muted-foreground mx-auto mb-2" />
-                    <p className="text-sm text-muted-foreground">Click to upload or drag & drop</p>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      MP4, MOV, WebM · Max {MAX_UPLOAD_SIZE_MB}MB · Max {MAX_UPLOAD_DURATION_SECONDS}s
-                    </p>
-                  </div>
-                )}
+            {inputMethod === "url" ? (
+              <div className="mb-6">
+                <label className="block text-sm font-medium mb-2 text-muted-foreground">YouTube URL</label>
                 <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept="video/*"
-                  onChange={handleFileChange}
-                  className="hidden"
+                  type="url"
+                  value={youtubeUrl}
+                  onChange={(e) => setYoutubeUrl(e.target.value)}
+                  placeholder="https://www.youtube.com/watch?v=..."
+                  className="w-full px-4 py-3 rounded-xl border border-white/10 bg-transparent text-sm placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary/40"
                 />
-              </label>
-            </div>
+                <p className="flex items-center gap-1 text-xs text-muted-foreground mt-2">
+                  <Info size={11} /> Max {MAX_UPLOAD_DURATION_SECONDS}s — checked once you submit, before anything downloads
+                </p>
+              </div>
+            ) : (
+              <div className="mb-6">
+                <label className="block text-sm font-medium mb-2 text-muted-foreground">Video File</label>
+                <label className="flex flex-col items-center justify-center w-full h-40 border-2 border-dashed border-white/10 rounded-xl cursor-pointer hover:border-primary/40 hover:bg-primary/5 transition-all">
+                  {uploadedFile ? (
+                    <div className="text-center">
+                      <Film size={28} className="text-primary mx-auto mb-2" />
+                      <p className="font-medium text-sm">{uploadedFile.name}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {(uploadedFile.size / 1024 / 1024).toFixed(1)} MB
+                        {videoDurationSeconds ? ` · ${Math.round(videoDurationSeconds)}s` : ""}
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="text-center">
+                      <Upload size={28} className="text-muted-foreground mx-auto mb-2" />
+                      <p className="text-sm text-muted-foreground">Click to upload or drag & drop</p>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        MP4, MOV, WebM · Max {MAX_UPLOAD_SIZE_MB}MB · Max {MAX_UPLOAD_DURATION_SECONDS}s
+                      </p>
+                    </div>
+                  )}
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="video/*"
+                    onChange={handleFileChange}
+                    className="hidden"
+                  />
+                </label>
+              </div>
+            )}
 
             <div>
               <label className="block text-sm font-medium mb-3 text-muted-foreground">Source Language</label>
@@ -461,7 +519,7 @@ export default function NewJobPage() {
               {[
                 {
                   label: "Source Video",
-                  value: uploadedFile?.name || "",
+                  value: inputMethod === "url" ? youtubeUrl : uploadedFile?.name || "",
                 },
                 {
                   label: "Source Language",

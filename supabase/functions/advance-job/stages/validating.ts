@@ -8,6 +8,9 @@ const MAX_UPLOAD_SIZE_MB = 300;
 // Client-side already checks duration/size before upload (NewJobPage.tsx),
 // but that's trivially bypassable -- this is the real, enforced check.
 export async function runValidating(admin: SupabaseClient, job: JobRow): Promise<StageResult> {
+  // Always set by this point -- direct uploads have it from job creation,
+  // youtube jobs have it from the fetching_source stage that runs first.
+  if (!job.source_storage_path) throw new Error("Missing source_storage_path going into validating stage");
   const folder = job.source_storage_path.substring(0, job.source_storage_path.lastIndexOf("/"));
   const fileName = job.source_storage_path.substring(job.source_storage_path.lastIndexOf("/") + 1);
 

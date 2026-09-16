@@ -99,6 +99,7 @@ async function processTts(admin: SupabaseClient, job: JobRow, segment: JobSegmen
 async function processFaceSwap(admin: SupabaseClient, job: JobRow, segment: JobSegmentRow): Promise<StageResult> {
   if (!segment.faceswap_prediction_id) {
     if (!segment.tts_storage_path) throw new Error("Segment has no tts_storage_path going into face-swap");
+    if (!job.source_storage_path) throw new Error("Missing source_storage_path going into face-swap");
 
     const avatarImageUrl = await speakerAvatarSignedUrl(admin, job, segment);
     const sourceVideoUrl = await createSignedUrl(admin, job.source_storage_path);

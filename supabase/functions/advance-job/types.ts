@@ -13,7 +13,9 @@ export type JobStatus =
   | "diarizing"
   | "awaiting_speaker_review"
   | "processing_segments"
-  | "compositing";
+  | "compositing"
+  // youtube input_method only
+  | "fetching_source";
 
 export type AvatarCategory = "man" | "woman" | "boy_child" | "girl_child" | "old_man" | "old_woman";
 
@@ -26,7 +28,10 @@ export interface JobRow {
   avatar_category: AvatarCategory | null;
   pipeline_mode: "single_avatar" | "multi_speaker";
   input_method: string;
-  source_storage_path: string;
+  // Null until fetching_source populates it (youtube jobs only) -- direct
+  // uploads have this set at job-creation time already.
+  source_storage_path: string | null;
+  source_youtube_url: string | null;
   source_file_name: string | null;
   source_mime_type: string | null;
   source_duration_seconds: number | null;

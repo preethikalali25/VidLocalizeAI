@@ -8,6 +8,7 @@ import type { JobRow, StageResult } from "../types.ts";
 // Gemini's Files API and wait for it to become ACTIVE," not literal audio
 // separation.
 export async function runExtracting(admin: SupabaseClient, job: JobRow): Promise<StageResult> {
+  if (!job.source_storage_path) throw new Error("Missing source_storage_path going into extracting stage");
   const { bytes, contentType } = await downloadFromStorage(admin, job.source_storage_path);
   const fileUri = await uploadFileToGemini(bytes, contentType, job.source_file_name ?? job.title);
 

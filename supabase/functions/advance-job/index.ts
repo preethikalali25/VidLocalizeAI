@@ -12,6 +12,7 @@ import { runRendering } from "./stages/rendering.ts";
 import { runDiarizing } from "./stages/diarizing.ts";
 import { runProcessingSegments } from "./stages/processing_segments.ts";
 import { runCompositing } from "./stages/compositing.ts";
+import { runFetchingSource } from "./stages/fetching_source.ts";
 
 const MAX_RETRIES = 3;
 const STALE_AFTER_SECONDS = 15;
@@ -38,6 +39,7 @@ const STAGE_HANDLERS: Record<
   diarizing: runDiarizing,
   processing_segments: runProcessingSegments,
   compositing: runCompositing,
+  fetching_source: runFetchingSource,
 };
 
 async function advanceOneJob(admin: Admin, job: JobRow): Promise<void> {

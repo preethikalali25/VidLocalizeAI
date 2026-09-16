@@ -1,11 +1,15 @@
 # video-utils-container
 
-Phase 4's dedicated ffmpeg service — the one piece of the multi-speaker
-pipeline that isn't a Supabase Edge Function or an AI vendor call, because
-Edge Functions structurally can't run ffmpeg (see the Phase 4 plan's
-compositing-infra section for why). It trims clips, extracts still frames,
-and splices/concatenates the final video. Stateless, no Supabase
-credentials of its own — see `server.js`'s top comment for the contract.
+A dedicated ffmpeg (+ yt-dlp) service — the piece of the pipeline that
+isn't a Supabase Edge Function or an AI vendor call, because Edge
+Functions structurally can't run arbitrary binaries. It trims clips,
+extracts still frames, splices/concatenates the final video, and fetches
+YouTube URLs as a video file. Stateless, no Supabase credentials of its
+own — see `server.js`'s top comment for the contract.
+
+**yt-dlp legal note**: downloading YouTube videos this way sits in a gray
+area under YouTube's ToS, even though it's extremely widely used for
+personal tools. Your call for your own project.
 
 **This is the one part of Phase 4 you can fully test yourself, locally,
 before any of it touches the live pipeline.** Do that first.
@@ -43,6 +47,15 @@ curl -X POST http://localhost:8080/composite \
   -H "Content-Type: application/json" \
   -d '{"source_video_url":"https://example.com/sample.mp4","replacement_segments":[{"start_seconds":2,"end_seconds":5,"clip_url":"https://example.com/trimmed.mp4"}]}' \
   --output composited.mp4
+
+# Fetch a short public YouTube video as an mp4 (rejects anything over the
+# 180s duration cap before downloading, and non-youtube.com/youtu.be URLs
+# outright)
+curl -X POST http://localhost:8080/fetch-youtube \
+  -H "Authorization: Bearer test-secret" \
+  -H "Content-Type: application/json" \
+  -d '{"youtube_url":"https://www.youtube.com/watch?v=SOME_SHORT_VIDEO_ID"}' \
+  --output youtube.mp4
 ```
 
 Play each output file and confirm it looks right before going further —
@@ -50,8 +63,17 @@ this is exactly the kind of thing that's much faster to catch here than
 after wiring it into the full async job pipeline.
 
 If any of these fail: read the JSON error response first (it includes
-ffmpeg's stderr), and check that `ffmpeg`/`ffprobe` are actually on your
-PATH (`ffmpeg -version`) if running outside the Docker image.
+ffmpeg's/yt-dlp's stderr), and check that `ffmpeg`/`ffprobe`/`yt-dlp` are
+actually on your PATH (`ffmpeg -version`, `yt-dlp --version`) if running
+outside the Docker image — `yt-dlp` specifically needs the standalone
+Linux binary from the Dockerfile, a plain `pip install yt-dlp` also works
+locally if you have Python.
+
+yt-dlp's most common failure mode is an extraction error when YouTube
+changes something internally — if fetch-youtube starts failing with
+errors mentioning signature extraction or similar, the fix is almost
+always upgrading yt-dlp (`yt-dlp -U` locally, or rebuild the Docker image
+to pick up a newer release).
 
 ## 2. Deploy it
 
@@ -109,3 +131,9 @@ supabase functions deploy advance-job
   since spliced pieces come from different sources (original trims vs.
   face-swap/lip-sync model output) with incompatible codecs/timestamps.
   This is slower than a copy-only concat but far more reliable.
+- `/fetch-youtube` caps resolution at 720p and rejects videos over 180s
+  (checked via metadata before downloading, not after) — mirrors the same
+  cap enforced on direct uploads elsewhere in this project. If you raise
+  `MAX_UPLOAD_DURATION_SECONDS`, update `MAX_YOUTUBE_DURATION_SECONDS` at
+  the top of `server.js` too (it's a separate copy, not a shared
+  constant — this is a different JS runtime than the Edge Functions).

@@ -16,6 +16,7 @@ import type { JobRow, JobSegmentRow, StageResult } from "../types.ts";
 // contract would need to change to an async start+poll shape like
 // Replicate's, matching generating_avatar.ts/lip_syncing.ts's pattern.
 export async function runCompositing(admin: SupabaseClient, job: JobRow): Promise<StageResult> {
+  if (!job.source_storage_path) throw new Error("Missing source_storage_path going into compositing stage");
   const { data: segments, error } = await admin
     .from("job_segments")
     .select("*")

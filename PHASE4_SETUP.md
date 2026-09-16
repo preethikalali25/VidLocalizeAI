@@ -24,6 +24,9 @@ In order, after everything in `PHASE3_SETUP.md`:
 1. `supabase/migrations/0007_multi_speaker_schema.sql` — new `job_speakers`
    and `job_segments` tables, widens `jobs.status`, makes
    `jobs.avatar_category` nullable, adds `jobs.pipeline_mode`.
+2. `supabase/migrations/0008_youtube_input.sql` — YouTube URL as a second
+   input method (see below): widens `jobs.input_method` and `jobs.status`,
+   makes `jobs.source_storage_path` nullable, adds `jobs.source_youtube_url`.
 
 ### 2. Deploy the new Edge Function
 
@@ -85,6 +88,36 @@ supabase secrets set VIDEO_UTILS_SECRET=<same secret you set above>
 supabase functions deploy advance-job
 ```
 
+### 5. YouTube URL input
+
+Adds a second way to start a job — paste a YouTube URL instead of
+uploading a file — using the same `video-utils-container` from step 4,
+now also running `yt-dlp`. **Legal note**: downloading YouTube videos
+this way is in a gray area under YouTube's own ToS, even though it's
+extremely widely used for personal tools like this one. Your call.
+
+If you already deployed the container for step 4, you need to **rebuild
+and redeploy it** — its `Dockerfile` changed to install `yt-dlp`
+alongside ffmpeg:
+
+```sh
+cd video-utils-container
+fly deploy   # or your Railway equivalent -- picks up the Dockerfile change
+```
+
+Everything else (the container's URL/secret, `advance-job`'s config) is
+unchanged from step 4 — no new secrets to set for this part. Redeploy the
+two functions this touched:
+
+```sh
+supabase functions deploy create-job
+supabase functions deploy advance-job
+```
+
+Test it standalone first, same principle as the rest of this container —
+see the `/fetch-youtube` example in `video-utils-container/README.md`,
+try it against a short public video before testing through the full app.
+
 ## Test end to end
 
 1. `npm run dev` (or your deployed site), go to `/new`
@@ -103,6 +136,12 @@ Start with a **short, single-continuous-shot clip** with 2 clearly
 distinct speakers for your first test — per the plan, rapid cuts and 3+
 speakers are much harder cases to debug first.
 
+To test YouTube input specifically: on step 1, click the now-unlocked
+**YouTube URL** tab instead of Upload File, paste a short (under 180s)
+public video's URL. The job starts at a new "fetching_source" stage
+(downloading via the container) before joining the normal flow at
+validating — works with either avatar mode, not just multi-speaker.
+
 ## Known gaps in this build
 
 - **No representative photo in the speaker review screen** — extracting a
@@ -119,3 +158,12 @@ speakers are much harder cases to debug first.
   footage rather than being replaced.
 - **No overlapping-speech handling** — if two people talk at once, that
   range keeps the original footage.
+- **YouTube job titles** come from YouTube's public oEmbed endpoint
+  (no API key needed); if that lookup fails for any reason it falls back
+  to a generic "YouTube Video" title — cosmetic only, doesn't affect
+  processing.
+- **yt-dlp is the most likely thing to break over time** — it fights an
+  ongoing cat-and-mouse battle with YouTube's own anti-scraping changes.
+  If `/fetch-youtube` starts failing with extraction/signature errors,
+  rebuild the container image to pick up a newer yt-dlp release (see
+  `video-utils-container/README.md`).
