@@ -96,6 +96,15 @@ now also running `yt-dlp`. **Legal note**: downloading YouTube videos
 this way is in a gray area under YouTube's own ToS, even though it's
 extremely widely used for personal tools like this one. Your call.
 
+**Expect this to hit "Sign in to confirm you're not a bot"** once
+deployed — YouTube increasingly blocks requests from datacenter IPs
+(every cloud host, not just Fly.io) regardless of which video you ask
+for. The fix is cookie-based auth, covered in
+`video-utils-container/README.md`'s "If fetch-youtube fails with 'Sign
+in to confirm you're not a bot'" section — set `YOUTUBE_COOKIES_B64` as
+a Fly secret (optional env var, everything works without it, just more
+likely to hit this error on some videos).
+
 If you already deployed the container for step 4, you need to **rebuild
 and redeploy it** — its `Dockerfile` changed to install `yt-dlp`
 alongside ffmpeg:

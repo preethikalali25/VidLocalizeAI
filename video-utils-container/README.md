@@ -75,6 +75,40 @@ errors mentioning signature extraction or similar, the fix is almost
 always upgrading yt-dlp (`yt-dlp -U` locally, or rebuild the Docker image
 to pick up a newer release).
 
+### If fetch-youtube fails with "Sign in to confirm you're not a bot"
+
+This is a different, more common failure once this is actually deployed:
+YouTube increasingly blocks requests from datacenter IPs (which is what
+every cloud host, including Fly.io, uses) regardless of which video you
+ask for. The fix is passing browser cookies from a real logged-in YouTube
+session, so the request looks like it's coming from a signed-in browser.
+
+**Strongly recommended: use a separate, throwaway Google account for
+this, not your main one.** These cookies carry real session authority for
+the whole Google account, not just YouTube, and they'll be sitting as a
+secret on a cloud server. A dedicated account limits the blast radius if
+anything ever leaks.
+
+1. Log into YouTube in a browser with the account you're dedicating to
+   this, install a cookie-export extension (e.g. "Get cookies.txt
+   LOCALLY" for Chrome/Firefox), and export cookies for youtube.com as a
+   Netscape-format `cookies.txt` file.
+2. Base64-encode it and set it as a Fly secret (never committed to the
+   repo, never baked into the Docker image):
+   ```sh
+   export YT_COOKIES_B64=$(base64 < cookies.txt | tr -d '\n')
+   fly secrets set YOUTUBE_COOKIES_B64=$YT_COOKIES_B64
+   ```
+3. The container picks it up automatically on next start/deploy (decodes
+   it once at startup, see `initYoutubeCookies()` in `server.js`) — no
+   code change needed, this env var is optional and everything works the
+   same without it (just more likely to hit bot-detection on some videos).
+
+Cookies expire periodically (YouTube sessions aren't permanent) — when
+`fetch-youtube` starts failing with the same "sign in to confirm" error
+again after previously working, re-export and re-set the secret the same
+way.
+
 ## 2. Deploy it
 
 Any container host with a Docker deploy path works. Fly.io is a

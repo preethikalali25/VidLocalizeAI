@@ -104,6 +104,31 @@ async function cleanup(paths) {
   await Promise.all(paths.map((p) => fs.unlink(p).catch(() => {})));
 }
 
+// Optional: YOUTUBE_COOKIES_B64 is a base64-encoded cookies.txt (Netscape
+// format, exported from a real logged-in YouTube session -- see README).
+// YouTube increasingly blocks requests from datacenter IPs like this
+// container's with "Sign in to confirm you're not a bot"; passing cookies
+// makes yt-dlp's requests look like they come from that signed-in
+// session. Decoded once at startup to a fixed path, not per-request --
+// the file never changes while the process is running. If the env var
+// isn't set, ytDlpCookieArgs() is just an empty array and everything
+// behaves exactly as before (unauthenticated, may hit bot-detection on
+// some videos).
+let cookiesFilePath = null;
+
+async function initYoutubeCookies() {
+  const b64 = process.env.YOUTUBE_COOKIES_B64;
+  if (!b64) return;
+  const target = path.join(os.tmpdir(), "yt-cookies.txt");
+  await fs.writeFile(target, Buffer.from(b64, "base64"));
+  cookiesFilePath = target;
+  console.log("Loaded YouTube cookies for yt-dlp authentication.");
+}
+
+function ytDlpCookieArgs() {
+  return cookiesFilePath ? ["--cookies", cookiesFilePath] : [];
+}
+
 // POST /trim-clip { source_video_url, start_seconds, end_seconds } -> video/mp4 bytes
 app.post("/trim-clip", async (req, res) => {
   const { source_video_url, start_seconds, end_seconds } = req.body || {};
@@ -244,7 +269,7 @@ app.post("/fetch-youtube", async (req, res) => {
   try {
     let meta;
     try {
-      const raw = await runYtDlp(["--dump-json", "--no-warnings", "--skip-download", youtube_url]);
+      const raw = await runYtDlp(["--dump-json", "--no-warnings", "--skip-download", ...ytDlpCookieArgs(), youtube_url]);
       meta = JSON.parse(raw);
     } catch (err) {
       // Surfaced as-is -- yt-dlp's own error text already explains private/
@@ -266,6 +291,7 @@ app.post("/fetch-youtube", async (req, res) => {
         "--merge-output-format", "mp4",
         "--no-warnings",
         "--no-playlist",
+        ...ytDlpCookieArgs(),
         "-o", out,
         youtube_url,
       ],
@@ -281,4 +307,8 @@ app.post("/fetch-youtube", async (req, res) => {
   }
 });
 
-app.listen(PORT, () => console.log(`video-utils-container listening on ${PORT}`));
+initYoutubeCookies()
+  .catch((err) => console.error("Failed to load YouTube cookies (continuing without them):", err))
+  .finally(() => {
+    app.listen(PORT, () => console.log(`video-utils-container listening on ${PORT}`));
+  });
