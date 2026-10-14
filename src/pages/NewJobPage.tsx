@@ -79,8 +79,10 @@ export default function NewJobPage() {
   const [sourceLang, setSourceLang] = useState("chinese");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Step 2
-  const [targetLang, setTargetLang] = useState<Language>("hindi");
+  // Step 2 -- multiple languages creates one job per language, all sharing
+  // the same uploaded video/YouTube URL and avatar selections, rather than
+  // one job producing multiple outputs (no backend changes needed this way).
+  const [targetLangs, setTargetLangs] = useState<Language[]>(["hindi"]);
 
   // Step 3 -- avatar photos are uploaded once on the /avatars page and
   // reused here; this page only fetches and selects, it doesn't upload.
@@ -160,6 +162,18 @@ export default function NewJobPage() {
     return true;
   };
 
+  const validateStep2 = () => {
+    if (targetLangs.length === 0) {
+      toast.error("Please choose at least one target language");
+      return false;
+    }
+    return true;
+  };
+
+  const toggleTargetLang = (lang: Language) => {
+    setTargetLangs((prev) => (prev.includes(lang) ? prev.filter((l) => l !== lang) : [...prev, lang]));
+  };
+
   const validateStep3 = () => {
     if (pipelineMode === "single_avatar" && !selectedCategory) {
       toast.error("Please choose an avatar");
@@ -170,6 +184,7 @@ export default function NewJobPage() {
 
   const handleNext = () => {
     if (step === 1 && !validateStep1()) return;
+    if (step === 2 && !validateStep2()) return;
     if (step === 3 && !validateStep3()) return;
     if (step < 4) setStep(step + 1);
   };
@@ -183,6 +198,10 @@ export default function NewJobPage() {
       toast.error(inputMethod === "url" ? "Please enter a valid YouTube URL" : "Please upload a video file");
       return;
     }
+    if (targetLangs.length === 0) {
+      toast.error("Please choose at least one target language");
+      return;
+    }
     if (pipelineMode === "single_avatar" && !selectedCategory) {
       toast.error("Please choose an avatar");
       return;
@@ -193,49 +212,67 @@ export default function NewJobPage() {
       const session = await ensureAnonymousSession();
       if (!session) throw new Error("Couldn't start a session — check Supabase Anonymous sign-ins are enabled");
 
-      let createJobBody: Record<string, unknown>;
-      if (inputMethod === "url") {
-        setSubmitStage("creating");
-        const title = (await fetchYoutubeTitle(youtubeUrl)) ?? "YouTube Video";
-        createJobBody = {
-          title,
-          sourceLang,
-          targetLanguage: targetLang,
-          pipelineMode,
-          avatarCategory: pipelineMode === "single_avatar" ? selectedCategory : undefined,
-          inputMethod: "youtube",
-          sourceYoutubeUrl: youtubeUrl,
-        };
-      } else {
+      // Shared across every language's job: the video is uploaded once
+      // (not once per language); a YouTube URL is handed to each job as-is
+      // -- the backend downloads it independently per job, which re-fetches
+      // the same video N times for N languages. Wasteful but simple, and
+      // the video is capped at 180s/720p so it's a minor cost, not a
+      // blocker -- not worth a shared-download mechanism for this v1.
+      let sharedStoragePath: string | null = null;
+      let sharedTitle = "";
+      if (inputMethod === "upload") {
         setSubmitStage("uploading");
         const uploadId = generateUploadId();
-        const storagePath = `${session.user.id}/${uploadId}/${uploadedFile!.name}`;
+        sharedStoragePath = `${session.user.id}/${uploadId}/${uploadedFile!.name}`;
         const { error: uploadError } = await supabase.storage
           .from("job-assets")
-          .upload(storagePath, uploadedFile!, { contentType: uploadedFile!.type });
+          .upload(sharedStoragePath, uploadedFile!, { contentType: uploadedFile!.type });
         if (uploadError) throw new Error(`Upload failed: ${uploadError.message}`);
-
-        setSubmitStage("creating");
-        createJobBody = {
-          title: uploadedFile!.name.replace(/\.[^.]+$/, ""),
-          sourceLang,
-          targetLanguage: targetLang,
-          pipelineMode,
-          avatarCategory: pipelineMode === "single_avatar" ? selectedCategory : undefined,
-          inputMethod: "upload",
-          sourceStoragePath: storagePath,
-          sourceFileName: uploadedFile!.name,
-          sourceDurationSeconds: videoDurationSeconds,
-          sourceSizeBytes: uploadedFile!.size,
-        };
+        sharedTitle = uploadedFile!.name.replace(/\.[^.]+$/, "");
+      } else {
+        sharedTitle = (await fetchYoutubeTitle(youtubeUrl)) ?? "YouTube Video";
       }
 
-      const { data, error: fnError } = await supabase.functions.invoke("create-job", { body: createJobBody });
-      if (fnError) throw new Error(fnError.message);
-      if (!data?.id) throw new Error("create-job did not return a job id");
+      setSubmitStage("creating");
+      const jobIds: string[] = [];
+      for (const lang of targetLangs) {
+        const createJobBody: Record<string, unknown> =
+          inputMethod === "upload"
+            ? {
+                title: sharedTitle,
+                sourceLang,
+                targetLanguage: lang,
+                pipelineMode,
+                avatarCategory: pipelineMode === "single_avatar" ? selectedCategory : undefined,
+                inputMethod: "upload",
+                sourceStoragePath: sharedStoragePath,
+                sourceFileName: uploadedFile!.name,
+                sourceDurationSeconds: videoDurationSeconds,
+                sourceSizeBytes: uploadedFile!.size,
+              }
+            : {
+                title: sharedTitle,
+                sourceLang,
+                targetLanguage: lang,
+                pipelineMode,
+                avatarCategory: pipelineMode === "single_avatar" ? selectedCategory : undefined,
+                inputMethod: "youtube",
+                sourceYoutubeUrl: youtubeUrl,
+              };
 
-      toast.success("Job submitted! Starting AI processing...");
-      navigate(`/processing/${data.id}`);
+        const { data, error: fnError } = await supabase.functions.invoke("create-job", { body: createJobBody });
+        if (fnError) throw new Error(`${LANGUAGES.find((l) => l.value === lang)?.label ?? lang}: ${fnError.message}`);
+        if (!data?.id) throw new Error(`${LANGUAGES.find((l) => l.value === lang)?.label ?? lang}: create-job did not return a job id`);
+        jobIds.push(data.id);
+      }
+
+      if (jobIds.length === 1) {
+        toast.success("Job submitted! Starting AI processing...");
+        navigate(`/processing/${jobIds[0]}`);
+      } else {
+        toast.success(`${jobIds.length} jobs submitted! Starting AI processing...`);
+        navigate("/dashboard");
+      }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to submit job");
     } finally {
@@ -382,30 +419,35 @@ export default function NewJobPage() {
         {step === 2 && (
           <div className="glass-card rounded-2xl p-8 slide-up">
             <h2 className="font-display text-xl font-600 mb-2">Target Language</h2>
-            <p className="text-muted-foreground text-sm mb-8">Choose the Indian language for your output video</p>
+            <p className="text-muted-foreground text-sm mb-8">
+              Choose one or more Indian languages — picking more than one creates a separate job per language
+            </p>
             <div className="space-y-3">
-              {LANGUAGES.map((lang) => (
-                <button
-                  key={lang.value}
-                  onClick={() => setTargetLang(lang.value)}
-                  className={`w-full flex items-center gap-4 p-5 rounded-xl border transition-all ${
-                    targetLang === lang.value
-                      ? "border-primary bg-primary/10"
-                      : "border-white/10 hover:border-white/20 hover:bg-white/5"
-                  }`}
-                >
-                  <span className="text-3xl">{lang.flag}</span>
-                  <div className="text-left">
-                    <p className={`font-600 font-display ${targetLang === lang.value ? "text-primary" : ""}`}>
-                      {lang.label}
-                    </p>
-                    <p className="text-lg text-muted-foreground">{lang.nativeLabel}</p>
-                  </div>
-                  {targetLang === lang.value && (
-                    <div className="ml-auto w-5 h-5 rounded-full gradient-primary flex items-center justify-center text-xs text-white">✓</div>
-                  )}
-                </button>
-              ))}
+              {LANGUAGES.map((lang) => {
+                const isSelected = targetLangs.includes(lang.value);
+                return (
+                  <button
+                    key={lang.value}
+                    onClick={() => toggleTargetLang(lang.value)}
+                    className={`w-full flex items-center gap-4 p-5 rounded-xl border transition-all ${
+                      isSelected
+                        ? "border-primary bg-primary/10"
+                        : "border-white/10 hover:border-white/20 hover:bg-white/5"
+                    }`}
+                  >
+                    <span className="text-3xl">{lang.flag}</span>
+                    <div className="text-left">
+                      <p className={`font-600 font-display ${isSelected ? "text-primary" : ""}`}>
+                        {lang.label}
+                      </p>
+                      <p className="text-lg text-muted-foreground">{lang.nativeLabel}</p>
+                    </div>
+                    {isSelected && (
+                      <div className="ml-auto w-5 h-5 rounded-full gradient-primary flex items-center justify-center text-xs text-white">✓</div>
+                    )}
+                  </button>
+                );
+              })}
             </div>
           </div>
         )}
@@ -526,8 +568,10 @@ export default function NewJobPage() {
                   value: SOURCE_LANGUAGES.find((l) => l.value === sourceLang)?.label || sourceLang,
                 },
                 {
-                  label: "Target Language",
-                  value: `${LANGUAGES.find((l) => l.value === targetLang)?.label} (${LANGUAGES.find((l) => l.value === targetLang)?.nativeLabel})`,
+                  label: targetLangs.length > 1 ? "Target Languages" : "Target Language",
+                  value: targetLangs
+                    .map((l) => `${LANGUAGES.find((lang) => lang.value === l)?.label} (${LANGUAGES.find((lang) => lang.value === l)?.nativeLabel})`)
+                    .join(", "),
                 },
                 {
                   label: "AI Avatar",
@@ -548,6 +592,9 @@ export default function NewJobPage() {
               <p className="text-sm text-muted-foreground">
                 Short clips (up to {MAX_UPLOAD_DURATION_SECONDS}s) for now while the real pipeline is being
                 validated — typically a few minutes end to end. You can check status on your dashboard anytime.
+                {targetLangs.length > 1 && (
+                  <> This creates {targetLangs.length} separate jobs, one per language, all shown on your dashboard.</>
+                )}
               </p>
             </div>
           </div>
