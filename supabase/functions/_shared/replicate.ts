@@ -48,21 +48,18 @@ export function createAvatarPrediction(sourceImageUrl: string, drivenAudioUrl: s
   });
 }
 
-// UNVERIFIED -- Phase 4, multi_speaker pipeline only. Unlike SADTALKER_VERSION
-// above (confirmed live against the real model page), this version hash and
-// these input field names have NOT been checked against a live account --
-// they're a best guess pending the same verification process used for
-// SadTalker (visit https://replicate.com/easel/advanced-face-swap, click
-// the API tab, click HTTP, compare the sample request's `version` and
-// `input` shape to what's used here, and update if different -- expect
-// this to need at least one round of correction, same as every other
-// Replicate integration in this project so far).
-const FACE_SWAP_VERSION = "REPLACE_ME_FACE_SWAP_VERSION_HASH";
+// Model: okaris/roop (video-to-video face swap -- source face photo +
+// target video -> video with that face swapped in throughout). Confirmed
+// live against the model's own Node.js API sample
+// (replicate.com/okaris/roop/api). If predictions start failing with a
+// 404/"not found", get the current version hash from the same page's
+// HTTP tab and update this.
+const FACE_SWAP_VERSION = "8c1e100ecabb3151cf1e6c62879b6de7a4b84602de464ed249b6cff0b86211d8";
 
 export function createFaceSwapPrediction(targetVideoUrl: string, sourceFaceImageUrl: string): Promise<ReplicatePrediction> {
   return createPrediction(FACE_SWAP_VERSION, {
-    target_video: targetVideoUrl,
-    swap_image: sourceFaceImageUrl,
+    source: sourceFaceImageUrl,
+    target: targetVideoUrl,
   });
 }
 
