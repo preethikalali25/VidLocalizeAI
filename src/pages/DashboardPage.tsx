@@ -19,6 +19,15 @@ const STATUS_CONFIG: Record<ProcessingStatus, { label: string; color: string; ic
   rendering: { label: "Rendering", color: "text-orange-400", icon: Loader2 },
   complete: { label: "Complete", color: "text-green-400", icon: CheckCircle },
   error: { label: "Failed", color: "text-red-400", icon: XCircle },
+  // multi_speaker / youtube pipeline additions (see Phase 4 plan) -- these
+  // were missing entirely, which crashed this whole page (STATUS_CONFIG[job.status]
+  // came back undefined for any job sitting in one of these) the first time
+  // a real job actually reached one of them.
+  fetching_source: { label: "Fetching Video", color: "text-yellow-400", icon: Loader2 },
+  diarizing: { label: "Detecting Speakers", color: "text-blue-400", icon: Loader2 },
+  awaiting_speaker_review: { label: "Awaiting Your Input", color: "text-primary", icon: Clock },
+  processing_segments: { label: "Processing Segments", color: "text-purple-400", icon: Loader2 },
+  compositing: { label: "Compositing", color: "text-orange-400", icon: Loader2 },
 };
 
 const TABS = ["all", "processing", "complete"] as const;
