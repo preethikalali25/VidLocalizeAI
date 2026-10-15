@@ -35,6 +35,30 @@ async function createPrediction(modelVersion: string, input: Record<string, unkn
   return res.json();
 }
 
+// The flip side of createPrediction above: "official" models (as opposed
+// to individual-uploaded community models) DO support this shortcut --
+// confirmed live against sync/lipsync-2-pro's own HTTP API sample, which
+// uses this exact endpoint with no version field at all (always runs
+// whatever's currently latest). No local polling behavior change either
+// way -- we deliberately don't send "Prefer: wait" here, same as every
+// other prediction in this file, so this still starts a prediction and
+// returns immediately rather than blocking the Edge Function invocation;
+// processing_segments.ts polls it across ticks like any other.
+async function createPredictionByModel(ownerModel: string, input: Record<string, unknown>): Promise<ReplicatePrediction> {
+  const res = await fetch(`${REPLICATE_API_BASE}/models/${ownerModel}/predictions`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiToken()}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ input }),
+  });
+  if (!res.ok) {
+    throw new Error(`Replicate prediction create failed: ${res.status} ${await res.text()}`);
+  }
+  return res.json();
+}
+
 // Model: lucataco/sadtalker (single portrait image + audio -> talking head
 // video). If predictions start failing with a 404/"not found" again, get
 // the current version hash from the "HTTP" tab under
@@ -63,13 +87,16 @@ export function createFaceSwapPrediction(targetVideoUrl: string, sourceFaceImage
   });
 }
 
-// UNVERIFIED -- same caveat as FACE_SWAP_VERSION above. Check
-// https://replicate.com/sync/lipsync-2-pro (or a Wav2Lip-based model, see
-// the Phase 4 plan) the same way before relying on this.
-const LIP_SYNC_VERSION = "REPLACE_ME_LIP_SYNC_VERSION_HASH";
+// Model: sync/lipsync-2-pro -- a real company's (Sync Labs) official
+// Replicate listing, not a community upload, which is why it uses the
+// model-shortcut endpoint above instead of a pinned version. Confirmed
+// live against the model's own HTTP API sample
+// (replicate.com/sync/lipsync-2-pro/api). Input field names (video,
+// audio) already matched what this code had before any changes.
+const LIP_SYNC_MODEL = "sync/lipsync-2-pro";
 
 export function createLipSyncPrediction(videoUrl: string, audioUrl: string): Promise<ReplicatePrediction> {
-  return createPrediction(LIP_SYNC_VERSION, {
+  return createPredictionByModel(LIP_SYNC_MODEL, {
     video: videoUrl,
     audio: audioUrl,
   });
