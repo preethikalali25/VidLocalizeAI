@@ -36,8 +36,9 @@ export async function runDiarizing(admin: SupabaseClient, job: JobRow): Promise<
   if (!existingSpeakers || existingSpeakers.length === 0) {
     const detected = await diarizeVideo(job.gemini_file_uri, job.source_mime_type ?? "video/mp4", job.source_lang);
     const kept = capToTopSpeakers(detected, MAX_SPEAKERS);
+    const withoutOverlaps = dropOverlappingSegments(kept);
 
-    for (const speaker of kept) {
+    for (const speaker of withoutOverlaps) {
       const { data: speakerRow, error: speakerError } = await admin
         .from("job_speakers")
         .insert({ job_id: job.id, speaker_label: speaker.speaker_label })
@@ -79,6 +80,42 @@ function capToTopSpeakers(speakers: DiarizedSpeaker[], max: number): DiarizedSpe
   const totalDuration = (s: DiarizedSpeaker) =>
     s.segments.reduce((sum, seg) => sum + (seg.end_seconds - seg.start_seconds), 0);
   return [...speakers].sort((a, b) => totalDuration(b) - totalDuration(a)).slice(0, max);
+}
+
+// v1 cut (see Phase 4 plan): "no overlapping-speech handling" -- real
+// conversation regularly has moments where two people talk over each
+// other, and Gemini's diarization reflects that honestly with genuinely
+// overlapping segment ranges across different speakers. The compositing
+// stage requires non-overlapping replacement ranges (confirmed live: a
+// real 16-segment job failed there after already paying for TTS/face-
+// swap/lip-sync on every segment, since nothing caught the overlap until
+// the very last step). Catching it here instead, before any of that
+// processing happens, both fixes the hard failure and avoids wasting
+// real Replicate cost on segments that would've been discarded anyway.
+// Both sides of a contested (overlapping) range are dropped entirely --
+// that time range just keeps the original, untouched footage, same
+// graceful-degrade philosophy as the speaker cap above.
+function dropOverlappingSegments(speakers: DiarizedSpeaker[]): DiarizedSpeaker[] {
+  type Tagged = { speakerIndex: number; segment: DiarizedSpeaker["segments"][number] };
+  const flat: Tagged[] = speakers.flatMap((speaker, speakerIndex) =>
+    speaker.segments.map((segment) => ({ speakerIndex, segment }))
+  );
+  flat.sort((a, b) => a.segment.start_seconds - b.segment.start_seconds);
+
+  const toDrop = new Set<Tagged>();
+  for (let i = 1; i < flat.length; i++) {
+    if (flat[i].segment.start_seconds < flat[i - 1].segment.end_seconds) {
+      toDrop.add(flat[i]);
+      toDrop.add(flat[i - 1]);
+    }
+  }
+
+  return speakers.map((speaker, speakerIndex) => ({
+    ...speaker,
+    segments: flat
+      .filter((t) => t.speakerIndex === speakerIndex && !toDrop.has(t))
+      .map((t) => t.segment),
+  }));
 }
 
 async function assignChronologicalSequenceIndexes(admin: SupabaseClient, jobId: string): Promise<void> {
