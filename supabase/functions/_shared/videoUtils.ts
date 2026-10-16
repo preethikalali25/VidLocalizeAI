@@ -25,6 +25,39 @@
 // JWTs -- this container has no relationship to Supabase auth, it's a
 // plain internal service only advance-job ever talks to.
 
+// Every call here used to have no timeout at all -- fine when the
+// container is healthy, but when it's overloaded/hung (e.g. mid-OOM) a
+// plain fetch() just waits forever. That's not just a slow response: it
+// breaks advance-job's job-claim mechanism (see index.ts's STALE_AFTER_
+// SECONDS), which assumes a claimed job either finishes or throws within
+// that window. A hung call that outlives it gets the job re-claimed and
+// re-run in parallel by a fresh sweep, piling up MORE concurrent calls
+// against an already-struggling container -- confirmed live: multiple
+// ffmpeg/node processes competing for memory at once, OOM-killing the
+// whole container. Bounding every call here keeps a hang from ever
+// exceeding advance-job's staleness window instead of running forever.
+const FETCH_TIMEOUT_MS = 90_000;
+
+async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs = FETCH_TIMEOUT_MS): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") {
+      throw new Error(`video-utils request timed out after ${timeoutMs / 1000}s`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+// Downloading+transcoding a full (if short, capped) source video takes
+// longer than the other operations here, which only process already-short
+// clips -- a longer bound for fetch-youtube specifically.
+const YOUTUBE_FETCH_TIMEOUT_MS = 180_000;
+
 function baseUrl(): string {
   const url = Deno.env.get("VIDEO_UTILS_URL");
   if (!url) throw new Error("VIDEO_UTILS_URL is not set -- the video-utils container hasn't been deployed/configured yet");
@@ -53,7 +86,7 @@ export async function trimClip(
   startSeconds: number,
   endSeconds: number
 ): Promise<{ bytes: Uint8Array; contentType: string }> {
-  const res = await fetch(`${baseUrl()}/trim-clip`, {
+  const res = await fetchWithTimeout(`${baseUrl()}/trim-clip`, {
     method: "POST",
     headers: authHeaders(),
     body: JSON.stringify({ source_video_url: sourceVideoUrl, start_seconds: startSeconds, end_seconds: endSeconds }),
@@ -68,7 +101,7 @@ export async function extractFrame(
   sourceVideoUrl: string,
   timestampSeconds: number
 ): Promise<{ bytes: Uint8Array; contentType: string }> {
-  const res = await fetch(`${baseUrl()}/extract-frame`, {
+  const res = await fetchWithTimeout(`${baseUrl()}/extract-frame`, {
     method: "POST",
     headers: authHeaders(),
     body: JSON.stringify({ source_video_url: sourceVideoUrl, timestamp_seconds: timestampSeconds }),
@@ -88,11 +121,15 @@ export interface ReplacementSegment {
 // starts timing out on longer videos in practice, the container's
 // contract would need to change to an async start+poll shape.
 export async function fetchYoutubeVideo(youtubeUrl: string): Promise<{ bytes: Uint8Array; contentType: string }> {
-  const res = await fetch(`${baseUrl()}/fetch-youtube`, {
-    method: "POST",
-    headers: authHeaders(),
-    body: JSON.stringify({ youtube_url: youtubeUrl }),
-  });
+  const res = await fetchWithTimeout(
+    `${baseUrl()}/fetch-youtube`,
+    {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ youtube_url: youtubeUrl }),
+    },
+    YOUTUBE_FETCH_TIMEOUT_MS
+  );
   return readVideoResponse(res, "fetch-youtube");
 }
 
@@ -105,7 +142,7 @@ export async function compositeVideo(
   sourceVideoUrl: string,
   replacementSegments: ReplacementSegment[]
 ): Promise<{ bytes: Uint8Array; contentType: string }> {
-  const res = await fetch(`${baseUrl()}/composite`, {
+  const res = await fetchWithTimeout(`${baseUrl()}/composite`, {
     method: "POST",
     headers: authHeaders(),
     body: JSON.stringify({ source_video_url: sourceVideoUrl, replacement_segments: replacementSegments }),

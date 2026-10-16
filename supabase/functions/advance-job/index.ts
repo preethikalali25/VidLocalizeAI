@@ -15,7 +15,14 @@ import { runCompositing } from "./stages/compositing.ts";
 import { runFetchingSource } from "./stages/fetching_source.ts";
 
 const MAX_RETRIES = 3;
-const STALE_AFTER_SECONDS = 15;
+// Must stay comfortably above the longest bound any single stage call can
+// legitimately take -- video-utils calls are now capped at 90s (180s for
+// fetch-youtube, see videoUtils.ts), so this needs real headroom above
+// that. Too short and a still-running (not dead) call gets its job
+// re-claimed and re-run in parallel by the next sweep -- confirmed live,
+// this was the actual cause of the video-utils container getting hit by
+// several concurrent compositing calls at once and OOM-crashing.
+const STALE_AFTER_SECONDS = 240;
 const MAX_JOBS_PER_SWEEP = 5;
 
 // deno-lint-ignore no-explicit-any
