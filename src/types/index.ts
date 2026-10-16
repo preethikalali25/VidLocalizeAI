@@ -72,6 +72,7 @@ export interface JobSpeakerRecord {
   speaker_label: string;
   representative_frame_storage_path: string | null;
   avatar_category: AvatarCategory | null;
+  suggested_avatar_category: AvatarCategory | null;
 }
 
 // multi_speaker pipeline only. Shape of a row from the `job_segments`

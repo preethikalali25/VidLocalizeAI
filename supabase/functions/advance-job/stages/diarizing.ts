@@ -41,7 +41,7 @@ export async function runDiarizing(admin: SupabaseClient, job: JobRow): Promise<
     for (const speaker of withoutOverlaps) {
       const { data: speakerRow, error: speakerError } = await admin
         .from("job_speakers")
-        .insert({ job_id: job.id, speaker_label: speaker.speaker_label })
+        .insert({ job_id: job.id, speaker_label: speaker.speaker_label, suggested_avatar_category: speaker.suggested_category })
         .select("id")
         .single();
       if (speakerError || !speakerRow) {

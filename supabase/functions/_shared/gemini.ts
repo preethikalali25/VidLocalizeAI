@@ -112,21 +112,24 @@ export interface DiarizedSegment {
   end_seconds: number;
   text: string;
 }
+export type SuggestedVoiceCategory = "man" | "woman" | "boy_child" | "girl_child" | "old_man" | "old_woman";
 export interface DiarizedSpeaker {
   speaker_label: string;
   segments: DiarizedSegment[];
+  suggested_category: SuggestedVoiceCategory | null;
 }
 
-// Multi-speaker pipeline only (see Phase 4 plan). Deliberately does NOT ask
-// Gemini to guess an avatar category for each speaker -- that's always a
-// human decision made in the awaiting_speaker_review review step, never an
-// ML guess, per the plan's reasoning: a wrong auto-guess produces a
-// silently wrong final video, discovered only after a full pipeline run.
+// Multi-speaker pipeline only (see Phase 4 plan). suggested_category is a
+// voice-based guess only -- a UI hint/pre-selected default in the speaker
+// review step, never auto-applied. The human still has to confirm (or
+// override) it via submit-speaker-assignments before anything downstream
+// runs, so a wrong guess here costs nothing beyond a slightly-off default.
 export async function diarizeVideo(
   fileUri: string,
   mimeType: string,
   sourceLang: string
 ): Promise<DiarizedSpeaker[]> {
+  const CATEGORIES = ["man", "woman", "boy_child", "girl_child", "old_man", "old_woman"];
   const responseSchema = {
     type: "OBJECT",
     properties: {
@@ -136,6 +139,7 @@ export async function diarizeVideo(
           type: "OBJECT",
           properties: {
             speaker_label: { type: "STRING" },
+            suggested_category: { type: "STRING", enum: CATEGORIES, nullable: true },
             segments: {
               type: "ARRAY",
               items: {
@@ -162,11 +166,16 @@ export async function diarizeVideo(
       {
         text:
           `Identify each distinct person who speaks in this video. For each speaker, give a short ` +
-          `stable label (e.g. "Speaker 1") and a list of their speaking segments in chronological ` +
+          `stable label (e.g. "Speaker 1"), a list of their speaking segments in chronological ` +
           `order, each with a start time and end time in seconds (as numbers, from the start of the ` +
           `video) and their speech transcribed verbatim in its original language (${sourceLang}). ` +
           `Only include segments where that person is actually speaking. Do not guess or describe ` +
-          `who the speakers are -- only transcribe and time-stamp their speech.`,
+          `who the speakers are beyond this -- only transcribe and time-stamp their speech.\n\n` +
+          `Also give a best-guess suggested_category for each speaker based on the apparent pitch/` +
+          `timbre of their voice alone, one of: ${CATEGORIES.join(", ")} (man/woman = adult, old_man/` +
+          `old_woman = clearly elderly-sounding, boy_child/girl_child = clearly a child's voice). This ` +
+          `is only a starting-point suggestion a human will review and can freely override -- if you're ` +
+          `genuinely unsure, return null rather than guessing.`,
       },
     ],
     { responseMimeType: "application/json", responseSchema }

@@ -111,7 +111,18 @@ export default function ProcessingPage() {
 
       const rows = (speakerRows ?? []) as JobSpeakerRecord[];
       setSpeakers(rows);
-      setAssignments(Object.fromEntries(rows.map((s) => [s.id, s.avatar_category])));
+      // Pre-select Gemini's voice-based suggestion as a starting point, but
+      // only if there's actually an uploaded photo for that category --
+      // otherwise the button would be disabled and "selected" would look
+      // broken. Always fully overridable before submit either way.
+      setAssignments(
+        Object.fromEntries(
+          rows.map((s) => [
+            s.id,
+            s.avatar_category ?? (s.suggested_avatar_category && photoMap[s.suggested_avatar_category] ? s.suggested_avatar_category : null),
+          ])
+        )
+      );
       setSpeakersLoading(false);
     })();
   }, [job?.status, jobId, speakers.length, speakersLoading]);
@@ -310,7 +321,14 @@ export default function ProcessingPage() {
                             <User size={18} className="text-muted-foreground/50" />
                           </div>
                           <div className="min-w-0">
-                            <p className="font-display font-600 text-sm">{speaker.speaker_label}</p>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <p className="font-display font-600 text-sm">{speaker.speaker_label}</p>
+                              {speaker.suggested_avatar_category && (
+                                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary">
+                                  Sounds like: {AVATAR_CATEGORIES.find((c) => c.value === speaker.suggested_avatar_category)?.label}
+                                </span>
+                              )}
+                            </div>
                             {speakerPreviews[speaker.id] && (
                               <p className="text-xs text-muted-foreground line-clamp-2 mt-0.5">
                                 "{speakerPreviews[speaker.id]}"

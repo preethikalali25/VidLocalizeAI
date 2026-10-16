@@ -57,6 +57,7 @@ export interface JobSpeakerRow {
   speaker_label: string;
   representative_frame_storage_path: string | null;
   avatar_category: AvatarCategory | null;
+  suggested_avatar_category: AvatarCategory | null;
   created_at: string;
   updated_at: string;
 }
