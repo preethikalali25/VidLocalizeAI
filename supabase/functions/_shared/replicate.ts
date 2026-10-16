@@ -110,6 +110,22 @@ export function createLipSyncPrediction(videoUrl: string, audioUrl: string): Pro
   });
 }
 
+// Model: black-forest-labs/flux-schnell -- fast (seconds, not minutes)
+// text-to-image, an official Black Forest Labs listing so this uses the
+// model-shortcut endpoint like the lip-sync/person-swap models above.
+// Used by generate-avatar-photo as an alternative to uploading a real
+// photo for an avatar slot -- see that function for the guardrail wording
+// appended to every prompt before it reaches here.
+const AVATAR_IMAGE_MODEL = "black-forest-labs/flux-schnell";
+
+export function createAvatarImagePrediction(prompt: string): Promise<ReplicatePrediction> {
+  return createPredictionByModel(AVATAR_IMAGE_MODEL, {
+    prompt,
+    aspect_ratio: "3:4",
+    output_format: "jpg",
+  });
+}
+
 export async function getPrediction(id: string): Promise<ReplicatePrediction> {
   const res = await fetch(`${REPLICATE_API_BASE}/predictions/${id}`, {
     headers: { Authorization: `Bearer ${apiToken()}` },

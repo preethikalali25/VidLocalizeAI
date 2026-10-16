@@ -1,10 +1,12 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { Upload, Trash2, Loader2, User } from "lucide-react";
+import { Upload, Trash2, Loader2, User, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import Navbar from "@/components/layout/Navbar";
 import { AVATAR_CATEGORIES, MAX_AVATAR_PHOTO_SIZE_MB } from "@/constants";
 import type { AvatarCategory, AvatarPhotoRecord } from "@/types";
 import { supabase, isSupabaseConfigured, ensureAnonymousSession } from "@/lib/supabase";
+
+const MAX_AVATAR_PROMPT_LENGTH = 300;
 
 type SlotState = {
   storagePath: string | null;
@@ -43,6 +45,8 @@ export default function ManageAvatarsPage() {
   const fileInputs = useRef<Record<AvatarCategory, HTMLInputElement | null>>(
     Object.fromEntries(AVATAR_CATEGORIES.map((c) => [c.value, null])) as Record<AvatarCategory, HTMLInputElement | null>
   );
+  const [describing, setDescribing] = useState<AvatarCategory | null>(null);
+  const [prompt, setPrompt] = useState("");
 
   const loadSlots = useCallback(async () => {
     if (!supabase) {
@@ -133,6 +137,39 @@ export default function ManageAvatarsPage() {
     }
   };
 
+  const handleGenerate = async (category: AvatarCategory) => {
+    if (!supabase) return;
+    const trimmed = prompt.trim();
+    if (!trimmed) {
+      toast.error("Describe who you want first");
+      return;
+    }
+
+    setSlots((prev) => ({ ...prev, [category]: { ...prev[category], uploading: true } }));
+    try {
+      const session = await ensureAnonymousSession();
+      if (!session) throw new Error("Couldn't start a session — check Supabase Anonymous sign-ins are enabled");
+
+      const { data, error } = await supabase.functions.invoke("generate-avatar-photo", {
+        body: { category, prompt: trimmed },
+      });
+      if (error) throw new Error(error.message);
+      const path: string = data.storage_path;
+
+      const { data: signed } = await supabase.storage.from("job-assets").createSignedUrl(path, 3600);
+      setSlots((prev) => ({
+        ...prev,
+        [category]: { storagePath: path, signedUrl: signed?.signedUrl ?? null, uploading: false },
+      }));
+      setDescribing(null);
+      setPrompt("");
+      toast.success(`${AVATAR_CATEGORIES.find((c) => c.value === category)?.label} avatar generated`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Generation failed");
+      setSlots((prev) => ({ ...prev, [category]: { ...prev[category], uploading: false } }));
+    }
+  };
+
   const handleRemove = async (category: AvatarCategory) => {
     if (!supabase) return;
     const slot = slots[category];
@@ -156,7 +193,8 @@ export default function ManageAvatarsPage() {
         <div className="mb-10">
           <h1 className="font-display text-3xl font-700 mb-2">My Avatars</h1>
           <p className="text-muted-foreground">
-            Upload one photo per category — these are reused as the AI presenter for every video you create.
+            Upload one photo per category, or tap the <Sparkles size={13} className="inline -mt-0.5" /> to describe one
+            instead — these are reused as the AI presenter for every video you create.
           </p>
         </div>
 
@@ -197,25 +235,63 @@ export default function ManageAvatarsPage() {
                         e.target.value = "";
                       }}
                     />
-                    <div className="flex gap-2">
-                      <button
-                        onClick={() => fileInputs.current[cat.value]?.click()}
-                        disabled={slot.uploading}
-                        className="flex-1 flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg bg-primary/10 text-primary text-xs font-medium hover:bg-primary/20 transition-all disabled:opacity-50"
-                      >
-                        <Upload size={12} />
-                        {slot.signedUrl ? "Replace" : "Upload"}
-                      </button>
-                      {slot.signedUrl && (
-                        <button
-                          onClick={() => handleRemove(cat.value)}
+                    {describing === cat.value ? (
+                      <div className="space-y-1.5">
+                        <textarea
+                          value={prompt}
+                          onChange={(e) => setPrompt(e.target.value.slice(0, MAX_AVATAR_PROMPT_LENGTH))}
+                          placeholder='e.g. "a young Indian woman, warm smile" — describe a type of person, not a named individual'
+                          rows={3}
                           disabled={slot.uploading}
-                          className="p-1.5 rounded-lg text-muted-foreground hover:text-red-400 hover:bg-red-400/10 transition-all disabled:opacity-50"
+                          className="w-full text-xs rounded-lg bg-muted border border-white/10 p-2 resize-none focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50"
+                        />
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => handleGenerate(cat.value)}
+                            disabled={slot.uploading}
+                            className="flex-1 flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg bg-primary/10 text-primary text-xs font-medium hover:bg-primary/20 transition-all disabled:opacity-50"
+                          >
+                            {slot.uploading ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
+                            Generate
+                          </button>
+                          <button
+                            onClick={() => { setDescribing(null); setPrompt(""); }}
+                            disabled={slot.uploading}
+                            className="px-2 py-1.5 rounded-lg text-muted-foreground text-xs hover:bg-white/5 transition-all disabled:opacity-50"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => fileInputs.current[cat.value]?.click()}
+                          disabled={slot.uploading}
+                          className="flex-1 flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg bg-primary/10 text-primary text-xs font-medium hover:bg-primary/20 transition-all disabled:opacity-50"
                         >
-                          <Trash2 size={14} />
+                          <Upload size={12} />
+                          {slot.signedUrl ? "Replace" : "Upload"}
                         </button>
-                      )}
-                    </div>
+                        <button
+                          onClick={() => { setDescribing(cat.value); setPrompt(""); }}
+                          disabled={slot.uploading}
+                          className="p-1.5 rounded-lg text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all disabled:opacity-50"
+                          title="Describe with AI instead"
+                        >
+                          <Sparkles size={14} />
+                        </button>
+                        {slot.signedUrl && (
+                          <button
+                            onClick={() => handleRemove(cat.value)}
+                            disabled={slot.uploading}
+                            className="p-1.5 rounded-lg text-muted-foreground hover:text-red-400 hover:bg-red-400/10 transition-all disabled:opacity-50"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
               );
