@@ -38,10 +38,32 @@ export async function runDiarizing(admin: SupabaseClient, job: JobRow): Promise<
     const kept = capToTopSpeakers(detected, MAX_SPEAKERS);
     const withoutOverlaps = dropOverlappingSegments(kept);
 
+    // Auto-assign (skip the human review pause) only when EVERY kept
+    // speaker has a confident suggestion with an uploaded photo for it --
+    // a single unconfident/unmatched speaker still needs the pause, since
+    // there's nothing sensible to auto-pick for that one. At the user's
+    // explicit request: this trades away the safety net the pause exists
+    // for (catching a wrong guess before paying for the rest of the
+    // pipeline) in the case where Gemini's guess was actually usable.
+    const { data: photoRows, error: photoError } = await admin
+      .from("avatar_photos")
+      .select("category")
+      .eq("user_id", job.user_id);
+    if (photoError) throw new Error(`Failed to check avatar photos: ${photoError.message}`);
+    const uploadedCategories = new Set((photoRows ?? []).map((p: { category: string }) => p.category));
+    const canAutoAssign =
+      withoutOverlaps.length > 0 &&
+      withoutOverlaps.every((s) => s.suggested_category && uploadedCategories.has(s.suggested_category));
+
     for (const speaker of withoutOverlaps) {
       const { data: speakerRow, error: speakerError } = await admin
         .from("job_speakers")
-        .insert({ job_id: job.id, speaker_label: speaker.speaker_label, suggested_avatar_category: speaker.suggested_category })
+        .insert({
+          job_id: job.id,
+          speaker_label: speaker.speaker_label,
+          suggested_avatar_category: speaker.suggested_category,
+          avatar_category: canAutoAssign ? speaker.suggested_category : null,
+        })
         .select("id")
         .single();
       if (speakerError || !speakerRow) {
@@ -66,6 +88,25 @@ export async function runDiarizing(admin: SupabaseClient, job: JobRow): Promise<
     }
 
     await assignChronologicalSequenceIndexes(admin, job.id);
+  }
+
+  // Re-derived fresh from the DB rather than the in-memory computation
+  // above, so this is correct on an idempotent retry too (existingSpeakers
+  // already non-empty, insert skipped entirely).
+  const { data: allSpeakers, error: allSpeakersError } = await admin
+    .from("job_speakers")
+    .select("avatar_category")
+    .eq("job_id", job.id);
+  if (allSpeakersError) throw new Error(`Failed to check speaker assignments: ${allSpeakersError.message}`);
+  const autoAssigned =
+    (allSpeakers ?? []).length > 0 && (allSpeakers ?? []).every((s: { avatar_category: string | null }) => s.avatar_category);
+
+  if (autoAssigned) {
+    return {
+      status: "translating",
+      progress: 40,
+      logMessage: "Detected speakers and auto-assigned avatars based on voice -- all suggestions were confident and matched an uploaded photo.",
+    };
   }
 
   return {
