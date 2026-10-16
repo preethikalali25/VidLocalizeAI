@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { Link2, Upload, ChevronRight, Info, Film, User, Users } from "lucide-react";
+import { Link2, Upload, ChevronRight, Info, Film, User, Users, Sparkles, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import Navbar from "@/components/layout/Navbar";
 import { LANGUAGES, AVATAR_CATEGORIES, SOURCE_LANGUAGES, MAX_UPLOAD_DURATION_SECONDS, MAX_UPLOAD_SIZE_MB } from "@/constants";
@@ -95,6 +95,9 @@ export default function NewJobPage() {
   const [selectedCategory, setSelectedCategory] = useState<AvatarCategory | null>(null);
   const [avatarPhotos, setAvatarPhotos] = useState<Record<AvatarCategory, string | null>>(emptyAvatarPhotos());
   const [avatarPhotosLoading, setAvatarPhotosLoading] = useState(true);
+  const [describingCategory, setDescribingCategory] = useState<AvatarCategory | null>(null);
+  const [avatarPrompt, setAvatarPrompt] = useState("");
+  const [generatingAvatar, setGeneratingAvatar] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -124,6 +127,38 @@ export default function NewJobPage() {
       setAvatarPhotosLoading(false);
     })();
   }, []);
+
+  const handleGenerateAvatar = async (category: AvatarCategory) => {
+    if (!supabase) return;
+    const trimmed = avatarPrompt.trim();
+    if (!trimmed) {
+      toast.error("Describe who you want first");
+      return;
+    }
+
+    setGeneratingAvatar(true);
+    try {
+      const session = await ensureAnonymousSession();
+      if (!session) throw new Error("Couldn't start a session — check Supabase Anonymous sign-ins are enabled");
+
+      const { data, error } = await supabase.functions.invoke("generate-avatar-photo", {
+        body: { category, prompt: trimmed },
+      });
+      if (error) throw new Error(error.message);
+      const path: string = data.storage_path;
+
+      const { data: signed } = await supabase.storage.from("job-assets").createSignedUrl(path, 3600);
+      setAvatarPhotos((prev) => ({ ...prev, [category]: signed?.signedUrl ?? null }));
+      setSelectedCategory(category);
+      setDescribingCategory(null);
+      setAvatarPrompt("");
+      toast.success(`${AVATAR_CATEGORIES.find((c) => c.value === category)?.label} avatar generated`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Generation failed");
+    } finally {
+      setGeneratingAvatar(false);
+    }
+  };
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -517,34 +552,82 @@ export default function NewJobPage() {
                   {AVATAR_CATEGORIES.map((cat) => {
                     const photoUrl = avatarPhotos[cat.value];
                     const isSelected = selectedCategory === cat.value;
+
+                    if (!photoUrl && describingCategory === cat.value) {
+                      return (
+                        <div key={cat.value} className="rounded-xl overflow-hidden border border-primary/40 bg-card/80 p-3 space-y-2">
+                          <p className="font-display font-600 text-sm">{cat.label}</p>
+                          <textarea
+                            value={avatarPrompt}
+                            onChange={(e) => setAvatarPrompt(e.target.value.slice(0, 300))}
+                            placeholder='e.g. "a young Indian woman, warm smile" — describe a type of person, not a named individual'
+                            rows={4}
+                            disabled={generatingAvatar}
+                            autoFocus
+                            className="w-full text-xs rounded-lg bg-muted border border-white/10 p-2 resize-none focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50"
+                          />
+                          <div className="flex gap-2">
+                            <button
+                              type="button"
+                              onClick={() => handleGenerateAvatar(cat.value)}
+                              disabled={generatingAvatar}
+                              className="flex-1 flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg bg-primary/10 text-primary text-xs font-medium hover:bg-primary/20 transition-all disabled:opacity-50"
+                            >
+                              {generatingAvatar ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
+                              Generate
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => { setDescribingCategory(null); setAvatarPrompt(""); }}
+                              disabled={generatingAvatar}
+                              className="px-2 py-1.5 rounded-lg text-muted-foreground text-xs hover:bg-white/5 transition-all disabled:opacity-50"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    }
+
                     return (
-                      <button
+                      <div
                         key={cat.value}
-                        type="button"
-                        disabled={!photoUrl}
-                        onClick={() => photoUrl && setSelectedCategory(cat.value)}
                         className={`rounded-xl overflow-hidden border transition-all ${
-                          !photoUrl ? "opacity-40 cursor-not-allowed border-white/10" :
-                          isSelected ? "border-primary ring-2 ring-primary/30 hover:scale-105" :
-                          "border-white/10 hover:border-white/20 hover:scale-105"
+                          !photoUrl ? "border-white/10" :
+                          isSelected ? "border-primary ring-2 ring-primary/30" :
+                          "border-white/10 hover:border-white/20"
                         }`}
                       >
-                        <div className="w-full aspect-[3/4] bg-muted flex items-center justify-center">
-                          {photoUrl ? (
-                            <img src={photoUrl} alt={cat.label} className="w-full h-full object-cover" />
-                          ) : (
-                            <User size={28} className="text-muted-foreground/30" />
-                          )}
-                        </div>
+                        <button
+                          type="button"
+                          disabled={!photoUrl}
+                          onClick={() => photoUrl && setSelectedCategory(cat.value)}
+                          className={`w-full ${!photoUrl ? "cursor-default" : "hover:scale-105 transition-transform"}`}
+                        >
+                          <div className="w-full aspect-[3/4] bg-muted flex items-center justify-center">
+                            {photoUrl ? (
+                              <img src={photoUrl} alt={cat.label} className="w-full h-full object-cover" />
+                            ) : (
+                              <User size={28} className="text-muted-foreground/30" />
+                            )}
+                          </div>
+                        </button>
                         <div className="p-3 bg-card/80">
                           <p className="font-display font-600 text-sm">{cat.label}</p>
                           {photoUrl ? (
                             isSelected && <span className="text-xs text-primary font-medium">Selected</span>
                           ) : (
-                            <span className="text-xs text-muted-foreground">Not uploaded</span>
+                            <button
+                              type="button"
+                              onClick={() => { setDescribingCategory(cat.value); setAvatarPrompt(""); }}
+                              className="flex items-center gap-1 text-xs text-primary hover:underline"
+                            >
+                              <Sparkles size={11} />
+                              Describe with AI
+                            </button>
                           )}
                         </div>
-                      </button>
+                      </div>
                     );
                   })}
                 </div>
