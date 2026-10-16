@@ -38,6 +38,7 @@ export interface JobRow {
   source_size_bytes: number | null;
   status: JobStatus;
   progress: number;
+  last_advanced_at: string;
   gemini_file_uri: string | null;
   transcript_text: string | null;
   translated_text: string | null;

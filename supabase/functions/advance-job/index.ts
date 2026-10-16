@@ -49,6 +49,32 @@ async function advanceOneJob(admin: Admin, job: JobRow): Promise<void> {
     return;
   }
 
+  // Claim the job before doing any real work, via an optimistic-lock
+  // update that only succeeds if last_advanced_at still matches what we
+  // just read it as. Without this, last_advanced_at was only ever written
+  // AFTER the handler finished -- but a single handler call (a Replicate
+  // poll, a Gemini TTS/transcription call) routinely outlives
+  // STALE_AFTER_SECONDS, so a second concurrent sweep (or the direct
+  // create-job kick racing the cron) would see the same job as "stale"
+  // and run the SAME stage a second time in parallel. Confirmed live: a
+  // real job's event log came in duplicate pairs ~1s apart for its entire
+  // run, double-paying for every Replicate/Gemini call and corrupting
+  // whichever concurrent write lost the race on a segment row.
+  const { data: claimed, error: claimError } = await admin
+    .from("jobs")
+    .update({ last_advanced_at: new Date().toISOString() })
+    .eq("id", job.id)
+    .eq("last_advanced_at", job.last_advanced_at)
+    .select("id");
+  if (claimError) {
+    console.error(`Failed to claim job ${job.id}: ${claimError.message}`);
+    return;
+  }
+  if (!claimed || claimed.length === 0) {
+    // Lost the race -- another invocation already claimed this tick.
+    return;
+  }
+
   try {
     const result = await handler(admin, job);
     await admin
