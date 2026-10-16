@@ -59,10 +59,21 @@ async function synthesizeWithGemini(text: string): Promise<{ bytes: Uint8Array; 
     throw new Error(`Gemini TTS failed: ${res.status} ${await res.text()}`);
   }
   const data = await res.json();
-  const part = data.candidates?.[0]?.content?.parts?.[0];
+  const candidate = data.candidates?.[0];
+  const part = candidate?.content?.parts?.[0];
   const base64: string | undefined = part?.inlineData?.data;
   const mimeType: string = part?.inlineData?.mimeType ?? "audio/pcm;rate=24000";
-  if (!base64) throw new Error("Gemini TTS returned no audio data");
+  if (!base64) {
+    // finishReason/safetyRatings (when present) say WHY Gemini returned no
+    // audio -- e.g. safety-filtered the translated text, or (seen with the
+    // preview TTS model) returned a text part instead of audio for no
+    // clear reason. Surfacing it turns a one-line "no audio data" retry
+    // log into something actually diagnosable if it keeps recurring.
+    const reason = candidate?.finishReason ?? "unknown";
+    const safety = candidate?.safetyRatings ? ` safetyRatings=${JSON.stringify(candidate.safetyRatings)}` : "";
+    const gotTextInstead = part?.text ? ` (got text part instead: ${JSON.stringify(part.text).slice(0, 200)})` : "";
+    throw new Error(`Gemini TTS returned no audio data (finishReason=${reason}${safety})${gotTextInstead}`);
+  }
 
   const pcm = base64ToBytes(base64);
   const sampleRateMatch = /rate=(\d+)/.exec(mimeType);
