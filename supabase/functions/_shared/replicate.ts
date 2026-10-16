@@ -72,18 +72,26 @@ export function createAvatarPrediction(sourceImageUrl: string, drivenAudioUrl: s
   });
 }
 
-// Model: okaris/roop (video-to-video face swap -- source face photo +
-// target video -> video with that face swapped in throughout). Confirmed
-// live against the model's own Node.js API sample
-// (replicate.com/okaris/roop/api). If predictions start failing with a
-// 404/"not found", get the current version hash from the same page's
-// HTTP tab and update this.
-const FACE_SWAP_VERSION = "8c1e100ecabb3151cf1e6c62879b6de7a4b84602de464ed249b6cff0b86211d8";
+// Model: prunaai/p-video-replace (full-person video swap -- one or more
+// reference photos of a person + a target video -> video with that whole
+// person swapped in throughout, motion-matched to the original footage).
+// Supersedes the earlier face-only okaris/roop swap below, at the
+// explicit ask to replace the whole person rather than just the face.
+// Confirmed live against the model's own HTTP API sample
+// (replicate.com/prunaai/p-video-replace/api) -- uses the model-shortcut
+// endpoint like sync/lipsync-2-pro, no pinned version.
+//
+// Reuses the same avatar_photos face closeups as the reference image for
+// now (first attempt, unverified quality) -- /avatars only collects face
+// photos today, not full-body references, which this model may want for
+// best results. Revisit if output quality suggests full-body reference
+// photos are actually needed.
+const PERSON_SWAP_MODEL = "prunaai/p-video-replace";
 
-export function createFaceSwapPrediction(targetVideoUrl: string, sourceFaceImageUrl: string): Promise<ReplicatePrediction> {
-  return createPrediction(FACE_SWAP_VERSION, {
-    source: sourceFaceImageUrl,
-    target: targetVideoUrl,
+export function createPersonSwapPrediction(targetVideoUrl: string, sourceFaceImageUrl: string): Promise<ReplicatePrediction> {
+  return createPredictionByModel(PERSON_SWAP_MODEL, {
+    video: targetVideoUrl,
+    images: [sourceFaceImageUrl],
   });
 }
 

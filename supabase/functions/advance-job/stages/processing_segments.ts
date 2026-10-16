@@ -1,7 +1,7 @@
 import type { SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { uploadToStorage, createSignedUrl, logEvent } from "../../_shared/supabaseAdmin.ts";
 import { synthesizeSpeech } from "../../_shared/tts.ts";
-import { createFaceSwapPrediction, createLipSyncPrediction, getPrediction, downloadOutput } from "../../_shared/replicate.ts";
+import { createPersonSwapPrediction, createLipSyncPrediction, getPrediction, downloadOutput } from "../../_shared/replicate.ts";
 import { trimClip } from "../../_shared/videoUtils.ts";
 import type { AvatarCategory, JobRow, JobSegmentRow, StageResult } from "../types.ts";
 
@@ -98,8 +98,8 @@ async function processTts(admin: SupabaseClient, job: JobRow, segment: JobSegmen
 
 async function processFaceSwap(admin: SupabaseClient, job: JobRow, segment: JobSegmentRow): Promise<StageResult> {
   if (!segment.faceswap_prediction_id) {
-    if (!segment.tts_storage_path) throw new Error("Segment has no tts_storage_path going into face-swap");
-    if (!job.source_storage_path) throw new Error("Missing source_storage_path going into face-swap");
+    if (!segment.tts_storage_path) throw new Error("Segment has no tts_storage_path going into person swap");
+    if (!job.source_storage_path) throw new Error("Missing source_storage_path going into person swap");
 
     const avatarImageUrl = await speakerAvatarSignedUrl(admin, job, segment);
     const sourceVideoUrl = await createSignedUrl(admin, job.source_storage_path);
@@ -107,23 +107,23 @@ async function processFaceSwap(admin: SupabaseClient, job: JobRow, segment: JobS
     const clipPath = `${job.user_id}/${job.id}/segments/${segment.id}/source_clip.mp4`;
     await uploadToStorage(admin, clipPath, bytes, contentType);
     const clipUrl = await createSignedUrl(admin, clipPath);
-    const prediction = await createFaceSwapPrediction(clipUrl, avatarImageUrl);
+    const prediction = await createPersonSwapPrediction(clipUrl, avatarImageUrl);
 
     await admin.from("job_segments").update({ faceswap_prediction_id: prediction.id }).eq("id", segment.id);
-    await logEvent(admin, job.id, "processing_segments", "Face swap started for segment.", "info", segment.id);
-    return { status: "processing_segments", progress: await estimateProgress(admin, job.id), logMessage: "Face swap started for segment." };
+    await logEvent(admin, job.id, "processing_segments", "Person swap started for segment.", "info", segment.id);
+    return { status: "processing_segments", progress: await estimateProgress(admin, job.id), logMessage: "Person swap started for segment." };
   }
 
   const prediction = await getPrediction(segment.faceswap_prediction_id);
   if (prediction.status === "failed" || prediction.status === "canceled") {
-    throw new Error(`Face-swap prediction ${prediction.status}: ${prediction.error ?? "no error detail"}`);
+    throw new Error(`Person swap prediction ${prediction.status}: ${prediction.error ?? "no error detail"}`);
   }
   if (prediction.status !== "succeeded") {
-    return { status: "processing_segments", progress: await estimateProgress(admin, job.id), logMessage: "Face swap in progress..." };
+    return { status: "processing_segments", progress: await estimateProgress(admin, job.id), logMessage: "Person swap in progress..." };
   }
 
   const outputUrl = Array.isArray(prediction.output) ? prediction.output[0] : prediction.output;
-  if (!outputUrl) throw new Error("Face-swap prediction has no output URL");
+  if (!outputUrl) throw new Error("Person swap prediction has no output URL");
   const { bytes, contentType } = await downloadOutput(outputUrl);
   const path = `${job.user_id}/${job.id}/segments/${segment.id}/faceswap.mp4`;
   await uploadToStorage(admin, path, bytes, contentType);
@@ -132,8 +132,8 @@ async function processFaceSwap(admin: SupabaseClient, job: JobRow, segment: JobS
     .from("job_segments")
     .update({ faceswap_output_storage_path: path, status: "pending_lipsync" })
     .eq("id", segment.id);
-  await logEvent(admin, job.id, "processing_segments", "Face swap complete for segment.", "info", segment.id);
-  return { status: "processing_segments", progress: await estimateProgress(admin, job.id), logMessage: "Face swap complete for segment." };
+  await logEvent(admin, job.id, "processing_segments", "Person swap complete for segment.", "info", segment.id);
+  return { status: "processing_segments", progress: await estimateProgress(admin, job.id), logMessage: "Person swap complete for segment." };
 }
 
 async function processLipSync(admin: SupabaseClient, job: JobRow, segment: JobSegmentRow): Promise<StageResult> {
