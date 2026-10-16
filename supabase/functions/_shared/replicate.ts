@@ -3,6 +3,28 @@
 
 const REPLICATE_API_BASE = "https://api.replicate.com/v1";
 
+// Same gap/fix as _shared/videoUtils.ts and _shared/gemini.ts -- an
+// unbounded fetch() can hang past advance-job's claim window while still
+// legitimately in flight, getting the job re-claimed and re-run in
+// parallel by the next sweep.
+const FETCH_TIMEOUT_MS = 60_000;
+const DOWNLOAD_TIMEOUT_MS = 180_000; // downloadOutput pulls real video bytes, not just a status/JSON response
+
+async function fetchWithTimeout(url: string, init?: RequestInit, timeoutMs = FETCH_TIMEOUT_MS): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") {
+      throw new Error(`Replicate request timed out after ${timeoutMs / 1000}s`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 function apiToken(): string {
   const token = Deno.env.get("REPLICATE_API_TOKEN");
   if (!token) throw new Error("REPLICATE_API_TOKEN is not set");
@@ -21,7 +43,7 @@ export interface ReplicatePrediction {
 // confirmed the hard way on lucataco/sadtalker. They need this classic
 // endpoint with an explicit pinned version instead.
 async function createPrediction(modelVersion: string, input: Record<string, unknown>): Promise<ReplicatePrediction> {
-  const res = await fetch(`${REPLICATE_API_BASE}/predictions`, {
+  const res = await fetchWithTimeout(`${REPLICATE_API_BASE}/predictions`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${apiToken()}`,
@@ -45,7 +67,7 @@ async function createPrediction(modelVersion: string, input: Record<string, unkn
 // returns immediately rather than blocking the Edge Function invocation;
 // processing_segments.ts polls it across ticks like any other.
 async function createPredictionByModel(ownerModel: string, input: Record<string, unknown>): Promise<ReplicatePrediction> {
-  const res = await fetch(`${REPLICATE_API_BASE}/models/${ownerModel}/predictions`, {
+  const res = await fetchWithTimeout(`${REPLICATE_API_BASE}/models/${ownerModel}/predictions`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${apiToken()}`,
@@ -127,7 +149,7 @@ export function createAvatarImagePrediction(prompt: string): Promise<ReplicatePr
 }
 
 export async function getPrediction(id: string): Promise<ReplicatePrediction> {
-  const res = await fetch(`${REPLICATE_API_BASE}/predictions/${id}`, {
+  const res = await fetchWithTimeout(`${REPLICATE_API_BASE}/predictions/${id}`, {
     headers: { Authorization: `Bearer ${apiToken()}` },
   });
   if (!res.ok) {
@@ -137,7 +159,7 @@ export async function getPrediction(id: string): Promise<ReplicatePrediction> {
 }
 
 export async function downloadOutput(url: string): Promise<{ bytes: Uint8Array; contentType: string }> {
-  const res = await fetch(url);
+  const res = await fetchWithTimeout(url, undefined, DOWNLOAD_TIMEOUT_MS);
   if (!res.ok) throw new Error(`Failed to download Replicate output: ${res.status}`);
   const contentType = res.headers.get("content-type") ?? "video/mp4";
   const bytes = new Uint8Array(await res.arrayBuffer());

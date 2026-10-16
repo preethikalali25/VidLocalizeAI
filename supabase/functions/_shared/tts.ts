@@ -14,6 +14,27 @@
 const GEMINI_API_BASE = "https://generativelanguage.googleapis.com";
 const GEMINI_TTS_MODEL = "gemini-2.5-flash-preview-tts";
 
+// Same gap/fix as _shared/videoUtils.ts and _shared/gemini.ts -- an
+// unbounded fetch() can hang past advance-job's claim window while still
+// legitimately in flight, getting the job re-claimed and re-run in
+// parallel by the next sweep.
+const FETCH_TIMEOUT_MS = 60_000;
+
+async function fetchWithTimeout(url: string, init: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") {
+      throw new Error(`TTS request timed out after ${FETCH_TIMEOUT_MS / 1000}s`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 // Google Cloud TTS voice per target language -- verify these still exist in
 // the GCP console (Text-to-Speech -> Voices) when you set this up; voice
 // catalogs change over time.
@@ -39,7 +60,7 @@ async function synthesizeWithGemini(text: string): Promise<{ bytes: Uint8Array; 
   const apiKey = Deno.env.get("GEMINI_API_KEY");
   if (!apiKey) throw new Error("GEMINI_API_KEY is not set");
 
-  const res = await fetch(
+  const res = await fetchWithTimeout(
     `${GEMINI_API_BASE}/v1beta/models/${GEMINI_TTS_MODEL}:generateContent?key=${apiKey}`,
     {
       method: "POST",
@@ -89,7 +110,7 @@ async function synthesizeWithGoogleCloudTts(
   const voice = GOOGLE_TTS_VOICE[targetLanguage];
   if (!voice) throw new Error(`No Google Cloud TTS voice configured for "${targetLanguage}"`);
 
-  const res = await fetch(`https://texttospeech.googleapis.com/v1/text:synthesize?key=${apiKey}`, {
+  const res = await fetchWithTimeout(`https://texttospeech.googleapis.com/v1/text:synthesize?key=${apiKey}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({

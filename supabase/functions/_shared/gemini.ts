@@ -19,6 +19,29 @@ function apiKey(): string {
   return key;
 }
 
+// Same gap and same fix as _shared/videoUtils.ts: an unbounded fetch() can
+// hang past advance-job's STALE_AFTER_SECONDS claim window while still
+// legitimately in flight, which gets the job re-claimed and re-run in
+// parallel by the next sweep. Confirmed as the live cause of the
+// compositing pile-up; applying the same bound here since diarizing/
+// transcribing/translating/TTS all go through this same fetch path.
+const FETCH_TIMEOUT_MS = 90_000;
+
+async function fetchWithTimeout(url: string, init?: RequestInit, timeoutMs = FETCH_TIMEOUT_MS): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") {
+      throw new Error(`Gemini request timed out after ${timeoutMs / 1000}s`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 // Resumable upload per https://ai.google.dev/gemini-api/docs/document-processing#large-files
 // Returns a Files API URI (e.g. "files/abc123") once the file is ACTIVE.
 export async function uploadFileToGemini(
@@ -26,7 +49,7 @@ export async function uploadFileToGemini(
   mimeType: string,
   displayName: string
 ): Promise<string> {
-  const startRes = await fetch(`${GEMINI_API_BASE}/upload/v1beta/files?key=${apiKey()}`, {
+  const startRes = await fetchWithTimeout(`${GEMINI_API_BASE}/upload/v1beta/files?key=${apiKey()}`, {
     method: "POST",
     headers: {
       "X-Goog-Upload-Protocol": "resumable",
@@ -43,15 +66,19 @@ export async function uploadFileToGemini(
   const uploadUrl = startRes.headers.get("X-Goog-Upload-URL");
   if (!uploadUrl) throw new Error("Gemini upload start response missing X-Goog-Upload-URL header");
 
-  const uploadRes = await fetch(uploadUrl, {
-    method: "POST",
-    headers: {
-      "Content-Length": String(bytes.byteLength),
-      "X-Goog-Upload-Offset": "0",
-      "X-Goog-Upload-Command": "upload, finalize",
+  const uploadRes = await fetchWithTimeout(
+    uploadUrl,
+    {
+      method: "POST",
+      headers: {
+        "Content-Length": String(bytes.byteLength),
+        "X-Goog-Upload-Offset": "0",
+        "X-Goog-Upload-Command": "upload, finalize",
+      },
+      body: new Blob([bytes]),
     },
-    body: new Blob([bytes]),
-  });
+    180_000 // the actual video bytes, not just metadata -- needs more room than the default
+  );
   if (!uploadRes.ok) {
     throw new Error(`Gemini upload finalize failed: ${uploadRes.status} ${await uploadRes.text()}`);
   }
@@ -66,7 +93,7 @@ export async function uploadFileToGemini(
 async function waitForFileActive(fileName: string, timeoutMs = 60_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const res = await fetch(`${GEMINI_API_BASE}/v1beta/${fileName}?key=${apiKey()}`);
+    const res = await fetchWithTimeout(`${GEMINI_API_BASE}/v1beta/${fileName}?key=${apiKey()}`);
     if (!res.ok) throw new Error(`Gemini file status check failed: ${res.status} ${await res.text()}`);
     const file = await res.json();
     if (file.state === "ACTIVE") return;
@@ -77,7 +104,7 @@ async function waitForFileActive(fileName: string, timeoutMs = 60_000): Promise<
 }
 
 async function generateContent(parts: unknown[], generationConfig?: Record<string, unknown>): Promise<string> {
-  const res = await fetch(
+  const res = await fetchWithTimeout(
     `${GEMINI_API_BASE}/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey()}`,
     {
       method: "POST",
@@ -86,7 +113,8 @@ async function generateContent(parts: unknown[], generationConfig?: Record<strin
         contents: [{ parts }],
         ...(generationConfig ? { generationConfig } : {}),
       }),
-    }
+    },
+    120_000 // diarization/translation over a longer transcript can take a while
   );
   if (!res.ok) {
     throw new Error(`Gemini generateContent failed: ${res.status} ${await res.text()}`);
