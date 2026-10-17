@@ -6,7 +6,7 @@ import type { JobRow, StageResult } from "../types.ts";
 export async function runSynthesizingSpeech(admin: SupabaseClient, job: JobRow): Promise<StageResult> {
   if (!job.translated_text) throw new Error("Missing translated_text going into synthesizing_speech stage");
 
-  const { bytes, contentType } = await synthesizeSpeech(job.translated_text, job.target_language);
+  const { bytes, contentType } = await synthesizeSpeech(job.translated_text, job.target_language, job.avatar_category);
   const ext = contentType === "audio/wav" ? "wav" : "mp3";
   const path = `${job.user_id}/${job.id}/tts.${ext}`;
   await uploadToStorage(admin, path, bytes, contentType);

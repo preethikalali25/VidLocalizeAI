@@ -121,7 +121,8 @@ async function handleSegmentError(
 async function processTts(admin: SupabaseClient, job: JobRow, segment: JobSegmentRow): Promise<StageResult> {
   if (!segment.translated_text) throw new Error("Segment has no translated_text");
 
-  const { bytes, contentType } = await synthesizeSpeech(segment.translated_text, job.target_language);
+  const avatarCategory = await getSpeakerAvatarCategory(admin, segment.speaker_id);
+  const { bytes, contentType } = await synthesizeSpeech(segment.translated_text, job.target_language, avatarCategory);
   const ext = contentType === "audio/wav" ? "wav" : "mp3";
   const path = `${job.user_id}/${job.id}/segments/${segment.id}/tts.${ext}`;
   await uploadToStorage(admin, path, bytes, contentType);
@@ -272,14 +273,18 @@ async function processLipSync(admin: SupabaseClient, job: JobRow, segment: JobSe
   return { status: "processing_segments", progress: await estimateProgress(admin, job.id), logMessage: "Segment ready." };
 }
 
-async function speakerAvatarSignedUrl(admin: SupabaseClient, job: JobRow, segment: JobSegmentRow): Promise<string> {
+async function getSpeakerAvatarCategory(admin: SupabaseClient, speakerId: string): Promise<AvatarCategory | null> {
   const { data: speaker, error: speakerError } = await admin
     .from("job_speakers")
     .select("avatar_category")
-    .eq("id", segment.speaker_id)
+    .eq("id", speakerId)
     .single();
   if (speakerError || !speaker) throw new Error(`Failed to look up speaker: ${speakerError?.message ?? "not found"}`);
-  const category: AvatarCategory | null = speaker.avatar_category;
+  return speaker.avatar_category as AvatarCategory | null;
+}
+
+async function speakerAvatarSignedUrl(admin: SupabaseClient, job: JobRow, segment: JobSegmentRow): Promise<string> {
+  const category = await getSpeakerAvatarCategory(admin, segment.speaker_id);
   if (!category) throw new Error("Speaker has no avatar_category assigned yet");
 
   const { data: photo, error: photoError } = await admin

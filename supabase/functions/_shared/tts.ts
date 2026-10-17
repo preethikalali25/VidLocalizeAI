@@ -37,7 +37,9 @@ async function fetchWithTimeout(url: string, init: RequestInit): Promise<Respons
 
 // Google Cloud TTS voice per target language -- verify these still exist in
 // the GCP console (Text-to-Speech -> Voices) when you set this up; voice
-// catalogs change over time.
+// catalogs change over time. Not category-aware (see VOICE_BY_CATEGORY
+// below) -- this path is currently inactive (GOOGLE_TTS_API_KEY unset in
+// this project), so that's left as a follow-up for if it's ever turned on.
 const GOOGLE_TTS_VOICE: Record<string, { languageCode: string; name: string }> = {
   hindi: { languageCode: "hi-IN", name: "hi-IN-Wavenet-A" },
   telugu: { languageCode: "te-IN", name: "te-IN-Standard-A" },
@@ -46,20 +48,44 @@ const GOOGLE_TTS_VOICE: Record<string, { languageCode: string; name: string }> =
   bengali: { languageCode: "bn-IN", name: "bn-IN-Wavenet-A" },
 };
 
+type AvatarCategory = "man" | "woman" | "boy_child" | "girl_child" | "old_man" | "old_woman";
+
+// Gemini TTS's prebuilt voices (https://ai.google.dev/gemini-api/docs/speech-generation#voices)
+// are all adult vocal registers, described by STYLE (firm/youthful/mature/
+// warm/etc), not age or gender -- there's no literal child voice in the
+// catalog. boy_child/girl_child get the most youthful-sounding entry
+// (Leda) as a best-effort approximation; it'll read as a young adult, not
+// an actual child. If a specific category still sounds wrong once you've
+// heard it, swap its name for a different entry from that voice list.
+const VOICE_BY_CATEGORY: Record<AvatarCategory, string> = {
+  man: "Orus",
+  woman: "Kore",
+  boy_child: "Leda",
+  girl_child: "Leda",
+  old_man: "Gacrux",
+  old_woman: "Gacrux",
+};
+const DEFAULT_VOICE = "Kore";
+
 export async function synthesizeSpeech(
   text: string,
-  targetLanguage: string
+  targetLanguage: string,
+  avatarCategory: AvatarCategory | null = null
 ): Promise<{ bytes: Uint8Array; contentType: string }> {
   const googleTtsKey = Deno.env.get("GOOGLE_TTS_API_KEY");
   return googleTtsKey
     ? synthesizeWithGoogleCloudTts(text, targetLanguage, googleTtsKey)
-    : synthesizeWithGemini(text);
+    : synthesizeWithGemini(text, avatarCategory);
 }
 
-async function synthesizeWithGemini(text: string): Promise<{ bytes: Uint8Array; contentType: string }> {
+async function synthesizeWithGemini(
+  text: string,
+  avatarCategory: AvatarCategory | null
+): Promise<{ bytes: Uint8Array; contentType: string }> {
   const apiKey = Deno.env.get("GEMINI_API_KEY");
   if (!apiKey) throw new Error("GEMINI_API_KEY is not set");
 
+  const voiceName = (avatarCategory && VOICE_BY_CATEGORY[avatarCategory]) || DEFAULT_VOICE;
   const res = await fetchWithTimeout(
     `${GEMINI_API_BASE}/v1beta/models/${GEMINI_TTS_MODEL}:generateContent?key=${apiKey}`,
     {
@@ -70,7 +96,7 @@ async function synthesizeWithGemini(text: string): Promise<{ bytes: Uint8Array; 
         generationConfig: {
           responseModalities: ["AUDIO"],
           speechConfig: {
-            voiceConfig: { prebuiltVoiceConfig: { voiceName: "Kore" } },
+            voiceConfig: { prebuiltVoiceConfig: { voiceName } },
           },
         },
       }),
