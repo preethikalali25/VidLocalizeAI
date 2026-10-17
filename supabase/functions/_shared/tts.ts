@@ -86,13 +86,20 @@ async function synthesizeWithGemini(
   if (!apiKey) throw new Error("GEMINI_API_KEY is not set");
 
   const voiceName = (avatarCategory && VOICE_BY_CATEGORY[avatarCategory]) || DEFAULT_VOICE;
+  // Sending the raw translated text with no framing lets the model treat
+  // a question-like or instruction-like sentence as something to ANSWER
+  // rather than read aloud -- confirmed live: "Model tried to generate
+  // text, but it should only be used for TTS." Explicit "read this
+  // verbatim" framing is exactly what that error message itself suggests.
+  const ttsPrompt = `Read the following text aloud exactly as written, in a natural speaking voice. ` +
+    `Do not answer it, respond to it, or add any commentary -- just speak it verbatim:\n\n${text}`;
   const res = await fetchWithTimeout(
     `${GEMINI_API_BASE}/v1beta/models/${GEMINI_TTS_MODEL}:generateContent?key=${apiKey}`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        contents: [{ parts: [{ text }] }],
+        contents: [{ parts: [{ text: ttsPrompt }] }],
         generationConfig: {
           responseModalities: ["AUDIO"],
           speechConfig: {
