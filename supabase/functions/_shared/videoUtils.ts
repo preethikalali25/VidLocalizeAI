@@ -149,3 +149,36 @@ export async function compositeVideo(
   });
   return readVideoResponse(res, "composite");
 }
+
+export interface AudioOverlay {
+  start_seconds: number;
+  end_seconds: number;
+  audio_url: string;
+}
+
+// Builds one continuous audio track spanning a block's full extended
+// range (see diarizing.ts's groupIntoBlocks): each overlay's own TTS
+// audio plays during its own sub-segment's window, and the source
+// video's original audio plays everywhere else in the block (the silent
+// stretches between a speaker's sentences). Used by processing_segments.ts
+// before face-swap/lip-sync runs on a multi-segment block, so lip-sync
+// has one track to sync the whole block against instead of just the
+// leader's own short segment.
+export async function stitchAudio(
+  sourceVideoUrl: string,
+  blockStartSeconds: number,
+  blockEndSeconds: number,
+  overlays: AudioOverlay[]
+): Promise<{ bytes: Uint8Array; contentType: string }> {
+  const res = await fetchWithTimeout(`${baseUrl()}/stitch-audio`, {
+    method: "POST",
+    headers: authHeaders(),
+    body: JSON.stringify({
+      source_video_url: sourceVideoUrl,
+      block_start_seconds: blockStartSeconds,
+      block_end_seconds: blockEndSeconds,
+      overlays,
+    }),
+  });
+  return readVideoResponse(res, "stitch-audio");
+}

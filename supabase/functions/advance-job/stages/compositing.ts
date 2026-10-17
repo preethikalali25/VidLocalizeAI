@@ -24,18 +24,26 @@ export async function runCompositing(admin: SupabaseClient, job: JobRow): Promis
     .order("sequence_index", { ascending: true });
   if (error) throw new Error(`Failed to load segments for compositing: ${error.message}`);
 
-  // Segments that ran out of retries (status "failed") are deliberately
-  // excluded here -- per the plan's graceful-degrade philosophy, their
-  // time range just keeps the original, untouched footage rather than
-  // failing the whole job.
-  const ready = ((segments ?? []) as JobSegmentRow[]).filter((s) => s.status === "ready");
+  // Only block leaders (block_leader_id null) ever carry a composited
+  // clip -- a follower's audio was folded into its leader's stitched
+  // track during processing_segments and it never gets its own
+  // face-swap/lip-sync pass (see diarizing.ts's groupIntoBlocks). Segments
+  // that ran out of retries (status "failed") are deliberately excluded
+  // here too -- per the plan's graceful-degrade philosophy, that time
+  // range just keeps the original, untouched footage rather than failing
+  // the whole job.
+  const all = (segments ?? []) as JobSegmentRow[];
+  const readyLeaders = all.filter((s) => s.block_leader_id === null && s.status === "ready");
 
   const replacementSegments: ReplacementSegment[] = await Promise.all(
-    ready.map(async (s) => {
+    readyLeaders.map(async (s) => {
       if (!s.final_segment_storage_path) throw new Error(`Segment ${s.id} is "ready" but has no final_segment_storage_path`);
       return {
-        start_seconds: s.start_seconds,
-        end_seconds: s.end_seconds,
+        // The block's full extended range, not the leader's own literal
+        // start/end -- this is what actually puts the swapped clip over
+        // the speaker's silent stretches too, not just their own speech.
+        start_seconds: s.block_start_seconds ?? s.start_seconds,
+        end_seconds: s.block_end_seconds ?? s.end_seconds,
         clip_url: await createSignedUrl(admin, s.final_segment_storage_path),
       };
     })
@@ -47,7 +55,7 @@ export async function runCompositing(admin: SupabaseClient, job: JobRow): Promis
   const path = `${job.user_id}/${job.id}/output.mp4`;
   await uploadToStorage(admin, path, bytes, contentType);
 
-  const failedCount = ((segments ?? []) as JobSegmentRow[]).filter((s) => s.status === "failed").length;
+  const failedCount = all.filter((s) => s.block_leader_id === null && s.status === "failed").length;
   return {
     status: "complete",
     progress: 100,

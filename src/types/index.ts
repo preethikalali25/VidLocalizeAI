@@ -83,5 +83,5 @@ export interface JobSegmentRecord {
   speaker_id: string;
   sequence_index: number;
   source_text: string | null;
-  status: "pending_tts" | "pending_faceswap" | "pending_lipsync" | "ready" | "failed";
+  status: "pending_tts" | "awaiting_followers" | "merged" | "pending_faceswap" | "pending_lipsync" | "ready" | "failed";
 }

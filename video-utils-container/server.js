@@ -254,6 +254,105 @@ app.post("/composite", async (req, res) => {
   }
 });
 
+// POST /stitch-audio
+//   { source_video_url, block_start_seconds, block_end_seconds,
+//     overlays: [{start_seconds, end_seconds, audio_url}] }
+//   -> audio/wav bytes
+//
+// Builds one continuous audio track for [block_start_seconds,
+// block_end_seconds): each overlay's own audio plays during its own
+// window, the source video's original audio plays everywhere else in the
+// block. Same gap/splice/concat shape as /composite above, just for an
+// audio-only track instead of full video -- see _shared/videoUtils.ts's
+// stitchAudio for why this exists (letting a speaker's swapped face keep
+// showing through their own silent stretches, carrying original audio
+// there instead of newly-translated speech).
+app.post("/stitch-audio", async (req, res) => {
+  const { source_video_url, block_start_seconds, block_end_seconds, overlays } = req.body || {};
+  if (
+    !source_video_url ||
+    typeof block_start_seconds !== "number" ||
+    typeof block_end_seconds !== "number" ||
+    !Array.isArray(overlays)
+  ) {
+    return res
+      .status(400)
+      .json({ error: "source_video_url, block_start_seconds, block_end_seconds, overlays are required" });
+  }
+
+  const sorted = [...overlays].sort((a, b) => a.start_seconds - b.start_seconds);
+  for (let i = 1; i < sorted.length; i++) {
+    if (sorted[i].start_seconds < sorted[i - 1].end_seconds) {
+      return res.status(400).json({ error: "overlays must not overlap" });
+    }
+  }
+
+  const src = tempPath(".mp4");
+  const baseAudio = tempPath("-base.wav");
+  const overlayFiles = [];
+  const pieceFiles = [];
+  const concatListPath = tempPath(".txt");
+  const out = tempPath(".wav");
+
+  try {
+    await downloadToFile(source_video_url, src);
+    // The block's own original audio -- the base track each overlay gets
+    // spliced into, same "keep original between replacements" idea as
+    // /composite, just for audio.
+    await runFfmpeg([
+      "-y", "-i", src,
+      "-ss", String(block_start_seconds), "-to", String(block_end_seconds),
+      "-vn", "-c:a", "pcm_s16le", "-ar", "24000", "-ac", "1",
+      baseAudio,
+    ]);
+
+    await Promise.all(sorted.map((ov, i) => downloadToFile(ov.audio_url, (overlayFiles[i] = tempPath(`-ov${i}.audio`)))));
+
+    let cursor = 0; // seconds, relative to block_start_seconds
+    for (let i = 0; i < sorted.length; i++) {
+      const relStart = sorted[i].start_seconds - block_start_seconds;
+      if (relStart > cursor) {
+        const gapOut = tempPath(`-gap${i}.wav`);
+        await runFfmpeg(["-y", "-i", baseAudio, "-ss", String(cursor), "-to", String(relStart), "-c:a", "pcm_s16le", gapOut]);
+        pieceFiles.push(gapOut);
+      }
+      // Re-encode each overlay to the base track's format -- TTS output
+      // varies (Gemini TTS is PCM WAV, Google Cloud TTS is MP3), and
+      // concat demuxer needs matching formats across pieces.
+      const normalized = tempPath(`-ovnorm${i}.wav`);
+      await runFfmpeg(["-y", "-i", overlayFiles[i], "-c:a", "pcm_s16le", "-ar", "24000", "-ac", "1", normalized]);
+      pieceFiles.push(normalized);
+
+      // No duration reconciliation, same known limitation as /composite --
+      // an overlay's REAL (TTS) duration, not the original segment's
+      // nominal length, is what the next gap starts from.
+      const durStr = await runFfprobe(["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", normalized]);
+      const dur = parseFloat(durStr);
+      cursor = relStart + (Number.isFinite(dur) ? dur : sorted[i].end_seconds - sorted[i].start_seconds);
+    }
+
+    const blockDuration = block_end_seconds - block_start_seconds;
+    if (cursor < blockDuration) {
+      const tailOut = tempPath("-tail.wav");
+      await runFfmpeg(["-y", "-i", baseAudio, "-ss", String(cursor), "-to", String(blockDuration), "-c:a", "pcm_s16le", tailOut]);
+      pieceFiles.push(tailOut);
+    }
+
+    if (pieceFiles.length === 0) throw new Error("No audio pieces to stitch (empty block or no overlays)");
+
+    const concatList = pieceFiles.map((p) => `file '${p.replace(/'/g, "'\\''")}'`).join("\n");
+    await fs.writeFile(concatListPath, concatList);
+    await runFfmpeg(["-y", "-f", "concat", "-safe", "0", "-i", concatListPath, "-c:a", "pcm_s16le", out]);
+
+    const bytes = await fs.readFile(out);
+    res.type("audio/wav").send(bytes);
+  } catch (err) {
+    res.status(500).json({ error: String(err.message || err) });
+  } finally {
+    await cleanup([src, baseAudio, out, concatListPath, ...pieceFiles, ...overlayFiles]);
+  }
+});
+
 // POST /fetch-youtube { youtube_url } -> video/mp4 bytes
 //
 // Checks the video's duration via --dump-json (no download) first and

@@ -55,6 +55,7 @@ export async function runDiarizing(admin: SupabaseClient, job: JobRow): Promise<
       withoutOverlaps.length > 0 &&
       withoutOverlaps.every((s) => s.suggested_category && uploadedCategories.has(s.suggested_category));
 
+    const speakerIds: string[] = [];
     for (const speaker of withoutOverlaps) {
       const { data: speakerRow, error: speakerError } = await admin
         .from("job_speakers")
@@ -69,21 +70,54 @@ export async function runDiarizing(admin: SupabaseClient, job: JobRow): Promise<
       if (speakerError || !speakerRow) {
         throw new Error(`Failed to save speaker "${speaker.speaker_label}": ${speakerError?.message ?? "no row returned"}`);
       }
+      speakerIds.push(speakerRow.id);
+    }
 
-      const segmentRows = speaker.segments.map((seg) => ({
-        job_id: job.id,
-        speaker_id: speakerRow.id,
-        start_seconds: seg.start_seconds,
-        end_seconds: seg.end_seconds,
-        source_text: seg.text,
-        // Backfilled below once every speaker's segments are known, so
-        // sequence_index reflects chronological order across ALL speakers,
-        // not just within one speaker.
-        sequence_index: 0,
-      }));
-      if (segmentRows.length > 0) {
-        const { error: segmentsError } = await admin.from("job_segments").insert(segmentRows);
-        if (segmentsError) throw new Error(`Failed to save segments for "${speaker.speaker_label}": ${segmentsError.message}`);
+    // Grouped into blocks (see groupIntoBlocks) so a speaker's own silent
+    // stretches between sentences get bridged into one continuous
+    // face-swap/lip-sync pass instead of reverting to the original
+    // footage every time they pause.
+    for (const block of groupIntoBlocks(withoutOverlaps)) {
+      const speakerId = speakerIds[block.speakerIndex];
+      const blockStart = Math.min(...block.segments.map((s) => s.start_seconds));
+      const blockEnd = Math.max(...block.segments.map((s) => s.end_seconds));
+      const [leaderSeg, ...followerSegs] = block.segments;
+
+      const { data: leaderRow, error: leaderError } = await admin
+        .from("job_segments")
+        .insert({
+          job_id: job.id,
+          speaker_id: speakerId,
+          start_seconds: leaderSeg.start_seconds,
+          end_seconds: leaderSeg.end_seconds,
+          source_text: leaderSeg.text,
+          block_start_seconds: blockStart,
+          block_end_seconds: blockEnd,
+          // Backfilled below once every block's segments are known, so
+          // sequence_index reflects chronological order across the whole
+          // job, not just within one block.
+          sequence_index: 0,
+        })
+        .select("id")
+        .single();
+      if (leaderError || !leaderRow) {
+        throw new Error(`Failed to save segment block for "${block.segments[0].text}": ${leaderError?.message ?? "no row returned"}`);
+      }
+
+      if (followerSegs.length > 0) {
+        const followerRows = followerSegs.map((seg) => ({
+          job_id: job.id,
+          speaker_id: speakerId,
+          start_seconds: seg.start_seconds,
+          end_seconds: seg.end_seconds,
+          source_text: seg.text,
+          block_leader_id: leaderRow.id,
+          block_start_seconds: blockStart,
+          block_end_seconds: blockEnd,
+          sequence_index: 0,
+        }));
+        const { error: followersError } = await admin.from("job_segments").insert(followerRows);
+        if (followersError) throw new Error(`Failed to save block follower segments: ${followersError.message}`);
       }
     }
 
@@ -157,6 +191,37 @@ function dropOverlappingSegments(speakers: DiarizedSpeaker[]): DiarizedSpeaker[]
       .filter((t) => t.speakerIndex === speakerIndex && !toDrop.has(t))
       .map((t) => t.segment),
   }));
+}
+
+interface SegmentBlock {
+  speakerIndex: number;
+  segments: DiarizedSpeaker["segments"];
+}
+
+// Groups each speaker's own segments into "blocks" -- runs of
+// consecutive-in-global-chronological-order segments belonging to the
+// same speaker, bridging any gap between them (a pause, listening to
+// someone else respond, etc.) as long as no OTHER speaker's segment falls
+// in between. This is what lets compositing keep a speaker's swapped face
+// showing through their own silent stretches instead of reverting to the
+// original footage the instant they stop talking.
+function groupIntoBlocks(speakers: DiarizedSpeaker[]): SegmentBlock[] {
+  type Tagged = { speakerIndex: number; segment: DiarizedSpeaker["segments"][number] };
+  const flat: Tagged[] = speakers.flatMap((speaker, speakerIndex) =>
+    speaker.segments.map((segment) => ({ speakerIndex, segment }))
+  );
+  flat.sort((a, b) => a.segment.start_seconds - b.segment.start_seconds);
+
+  const blocks: SegmentBlock[] = [];
+  for (const { speakerIndex, segment } of flat) {
+    const last = blocks[blocks.length - 1];
+    if (last && last.speakerIndex === speakerIndex) {
+      last.segments.push(segment);
+    } else {
+      blocks.push({ speakerIndex, segments: [segment] });
+    }
+  }
+  return blocks;
 }
 
 async function assignChronologicalSequenceIndexes(admin: SupabaseClient, jobId: string): Promise<void> {

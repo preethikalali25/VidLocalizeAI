@@ -63,12 +63,29 @@ export interface JobSpeakerRow {
   updated_at: string;
 }
 
-export type SegmentStatus = "pending_tts" | "pending_faceswap" | "pending_lipsync" | "ready" | "failed";
+export type SegmentStatus =
+  | "pending_tts"
+  | "awaiting_followers"
+  | "merged"
+  | "pending_faceswap"
+  | "pending_lipsync"
+  | "ready"
+  | "failed";
 
 // One row per speaking segment (multi_speaker jobs only). status tracks
 // this segment's own per-stage progress independently of the parent job's
 // status -- the segment-loop stages (TTS/face-swap/lip-sync) each process
 // whichever of a job's segments are still pending_<that stage>.
+//
+// block_leader_id is null for a block "leader" (the first segment in a
+// run of one speaker's own consecutive segments) and a solo segment
+// alike; it points to the leader's id for a "follower". Only a leader
+// ever reaches pending_faceswap/pending_lipsync/ready -- a follower stops
+// at "merged" once its own TTS is done, see processing_segments.ts.
+// block_start_seconds/block_end_seconds are the block's full extended
+// range (equal to the segment's own start/end for a solo block) --
+// that's what face-swap/lip-sync/compositing actually operate on, not
+// the leader's own literal start_seconds/end_seconds.
 export interface JobSegmentRow {
   id: string;
   job_id: string;
@@ -86,6 +103,10 @@ export interface JobSegmentRow {
   status: SegmentStatus;
   retry_count: number;
   error_message: string | null;
+  block_leader_id: string | null;
+  block_start_seconds: number | null;
+  block_end_seconds: number | null;
+  stitched_audio_storage_path: string | null;
 }
 
 // A stage handler does exactly one unit of work and describes how the job
