@@ -263,10 +263,33 @@ export interface ScriptLine {
   text: string;
 }
 
-export async function parseScript(scriptText: string): Promise<ScriptLine[]> {
+export type SuggestedAvatarCategory = "man" | "woman" | "boy_child" | "girl_child" | "old_man" | "old_woman";
+export interface ScriptCharacter {
+  name: string;
+  suggested_category: SuggestedAvatarCategory | null;
+}
+
+export interface ParsedScript {
+  characters: ScriptCharacter[];
+  lines: ScriptLine[];
+}
+
+export async function parseScript(scriptText: string): Promise<ParsedScript> {
+  const CATEGORIES = ["man", "woman", "boy_child", "girl_child", "old_man", "old_woman"];
   const responseSchema = {
     type: "OBJECT",
     properties: {
+      characters: {
+        type: "ARRAY",
+        items: {
+          type: "OBJECT",
+          properties: {
+            name: { type: "STRING" },
+            suggested_category: { type: "STRING", enum: CATEGORIES, nullable: true },
+          },
+          required: ["name"],
+        },
+      },
       lines: {
         type: "ARRAY",
         items: {
@@ -279,18 +302,25 @@ export async function parseScript(scriptText: string): Promise<ScriptLine[]> {
         },
       },
     },
-    required: ["lines"],
+    required: ["characters", "lines"],
   };
 
   const raw = await generateContent(
     [
       {
         text:
-          `Parse the following script into a list of spoken dialogue lines, in reading order. For each line, ` +
-          `give the character's name exactly as credited (e.g. "MOM", "Dad", "Lily") and the words they actually ` +
-          `say. Do NOT include stage directions, parentheticals describing tone/action (e.g. "(giggling)"), scene ` +
-          `headers, or narration -- only lines a voice actor would actually speak aloud. Normalize each ` +
-          `character's name to the same spelling/casing every time they speak.\n\n${scriptText}`,
+          `Parse the following script into (1) a list of every distinct character and (2) a list of spoken ` +
+          `dialogue lines, in reading order. For each line, give the character's name exactly as credited (e.g. ` +
+          `"MOM", "Dad", "Lily") and the words they actually say. Do NOT include stage directions, parentheticals ` +
+          `describing tone/action (e.g. "(giggling)"), scene headers, or narration in a line's text -- only words ` +
+          `a voice actor would actually speak aloud. Normalize each character's name to the same spelling/casing ` +
+          `every time they speak.\n\n` +
+          `For each character, also give a best-guess suggested_category based on their name and how other ` +
+          `characters address/refer to them in the script (e.g. "Mom"/"Mommy" -> woman, "Dad" -> man, a named ` +
+          `child character -> boy_child or girl_child), one of: ${CATEGORIES.join(", ")} (man/woman = adult, ` +
+          `old_man/old_woman = explicitly elderly, boy_child/girl_child = explicitly a child). This is only a ` +
+          `starting-point suggestion a human will review and can freely override -- if there's no clear signal, ` +
+          `return null rather than guessing.\n\n${scriptText}`,
       },
     ],
     { responseMimeType: "application/json", responseSchema }
@@ -300,7 +330,10 @@ export async function parseScript(scriptText: string): Promise<ScriptLine[]> {
   if (!Array.isArray(parsed.lines) || parsed.lines.length === 0) {
     throw new Error("Gemini script parsing returned no dialogue lines");
   }
-  return parsed.lines;
+  if (!Array.isArray(parsed.characters)) {
+    throw new Error("Gemini script parsing returned no characters array");
+  }
+  return parsed;
 }
 
 export async function translateText(text: string, targetLanguage: string): Promise<string> {

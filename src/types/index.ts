@@ -100,6 +100,7 @@ export interface DramaCharacterRecord {
   job_id: string;
   name: string;
   avatar_category: AvatarCategory | null;
+  suggested_avatar_category: AvatarCategory | null;
 }
 
 // script_drama pipeline only. Shape of a row from the `drama_lines`

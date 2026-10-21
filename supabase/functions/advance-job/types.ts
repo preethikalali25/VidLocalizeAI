@@ -130,6 +130,7 @@ export interface DramaCharacterRow {
   job_id: string;
   name: string;
   avatar_category: AvatarCategory | null;
+  suggested_avatar_category: AvatarCategory | null;
   created_at: string;
   updated_at: string;
 }

@@ -179,7 +179,17 @@ export default function ProcessingPage() {
 
       const rows = (characterRows ?? []) as DramaCharacterRecord[];
       setCharacters(rows);
-      setCharacterAssignments(Object.fromEntries(rows.map((c) => [c.id, c.avatar_category])));
+      // Pre-select Gemini's text-based suggestion as a starting point, same
+      // "only if there's an uploaded photo for it" rule as the speaker
+      // review's pre-select.
+      setCharacterAssignments(
+        Object.fromEntries(
+          rows.map((c) => [
+            c.id,
+            c.avatar_category ?? (c.suggested_avatar_category && photoMap[c.suggested_avatar_category] ? c.suggested_avatar_category : null),
+          ])
+        )
+      );
       setCharactersLoading(false);
     })();
   }, [job?.status, jobId, characters.length, charactersLoading]);
@@ -487,7 +497,14 @@ export default function ProcessingPage() {
                             <User size={18} className="text-muted-foreground/50" />
                           </div>
                           <div className="min-w-0">
-                            <p className="font-display font-600 text-sm">{character.name}</p>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <p className="font-display font-600 text-sm">{character.name}</p>
+                              {character.suggested_avatar_category && (
+                                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary">
+                                  Likely: {AVATAR_CATEGORIES.find((c) => c.value === character.suggested_avatar_category)?.label}
+                                </span>
+                              )}
+                            </div>
                             {characterPreviews[character.id] && (
                               <p className="text-xs text-muted-foreground line-clamp-2 mt-0.5">
                                 "{characterPreviews[character.id]}"
