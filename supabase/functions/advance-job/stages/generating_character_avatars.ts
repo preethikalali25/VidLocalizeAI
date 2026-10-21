@@ -50,6 +50,31 @@ export async function runGeneratingCharacterAvatars(admin: SupabaseClient, job: 
   const character = pending[0] as DramaCharacterRow;
 
   try {
+    // Reuse a previously-generated avatar for this same character name
+    // (e.g. across episodes of the same series) instead of generating a
+    // fresh random face every job -- see 0014_character_avatar_library.sql.
+    const normalizedName = character.name.trim().toLowerCase();
+    const { data: cached, error: cacheError } = await admin
+      .from("character_avatar_library")
+      .select("avatar_storage_path, avatar_category")
+      .eq("user_id", job.user_id)
+      .eq("character_name", normalizedName)
+      .maybeSingle();
+    if (cacheError) throw new Error(`Failed to check character avatar library: ${cacheError.message}`);
+
+    if (cached) {
+      await admin
+        .from("drama_characters")
+        .update({ avatar_storage_path: cached.avatar_storage_path, avatar_category: cached.avatar_category })
+        .eq("id", character.id);
+      await logEvent(admin, job.id, "generating_character_avatars", `Reused "${character.name}"'s avatar from a previous episode.`, "info");
+      return {
+        status: "generating_character_avatars",
+        progress: await estimateProgress(admin, job.id),
+        logMessage: `Reused "${character.name}"'s avatar from a previous episode.`,
+      };
+    }
+
     if (!character.avatar_prediction_id) {
       const category = character.avatar_category ?? "woman";
       const prediction = await createAvatarImagePrediction(`${CATEGORY_PROMPT[category]}${GUARDRAIL_SUFFIX}`);
@@ -85,6 +110,23 @@ export async function runGeneratingCharacterAvatars(admin: SupabaseClient, job: 
     await uploadToStorage(admin, path, bytes, contentType);
 
     await admin.from("drama_characters").update({ avatar_storage_path: path }).eq("id", character.id);
+
+    // Cache it for this character name so a future episode (or any other
+    // script with the same character name) reuses this exact avatar
+    // instead of generating a new random one.
+    const { error: cacheWriteError } = await admin
+      .from("character_avatar_library")
+      .upsert(
+        { user_id: job.user_id, character_name: normalizedName, avatar_category: character.avatar_category, avatar_storage_path: path },
+        { onConflict: "user_id,character_name" }
+      );
+    if (cacheWriteError) {
+      // Non-fatal -- this episode's video is unaffected either way, it
+      // just means the NEXT episode won't get the reuse benefit. Log and
+      // move on rather than failing the whole character over it.
+      await logEvent(admin, job.id, "generating_character_avatars", `Saved avatar but failed to cache it for reuse: ${cacheWriteError.message}`, "error");
+    }
+
     await logEvent(admin, job.id, "generating_character_avatars", `Avatar ready for "${character.name}".`, "info");
     return {
       status: "generating_character_avatars",
