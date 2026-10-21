@@ -18,6 +18,7 @@ export type ProcessingStatus =
   // script_drama pipeline only -- generates an original video from a
   // script, no source video at all.
   | "parsing_script"
+  | "generating_character_avatars"
   | "awaiting_character_avatars"
   | "translating_lines"
   | "generating_clips"

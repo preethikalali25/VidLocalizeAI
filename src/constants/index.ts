@@ -49,6 +49,7 @@ export const MULTI_SPEAKER_PROCESSING_STEPS: ProcessingStep[] = [
 // has), same reasoning as MULTI_SPEAKER_PROCESSING_STEPS above.
 export const SCRIPT_DRAMA_PROCESSING_STEPS: ProcessingStep[] = [
   { id: "parsing_script", label: "Reading Script", description: "Finding characters and their lines", duration: 4000 },
+  { id: "generating_character_avatars", label: "Creating Cast", description: "Generating a unique AI avatar per character", duration: 6000 },
   { id: "awaiting_character_avatars", label: "Your Review", description: "Waiting for you to assign avatars", duration: 0 },
   { id: "translating_lines", label: "Translating", description: "Translating each character's lines", duration: 4000 },
   { id: "generating_clips", label: "Generating Clips", description: "Voice and video per line", duration: 8000 },

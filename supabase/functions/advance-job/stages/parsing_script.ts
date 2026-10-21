@@ -1,6 +1,14 @@
 import type { SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { parseScript } from "../../_shared/gemini.ts";
-import type { JobRow, StageResult } from "../types.ts";
+import type { AvatarCategory, JobRow, StageResult } from "../types.ts";
+
+// Fallback when Gemini's text-based category guess comes back null (no
+// clear signal in the script) -- any category is fine as a starting
+// point for a uniquely-generated avatar (see generating_character_
+// avatars.ts), unlike the multi_speaker pipeline where a wrong voice-
+// category guess costs real TTS/swap money before anyone notices. The
+// explicit ask here was zero manual steps, not precision.
+const DEFAULT_CATEGORY: AvatarCategory = "woman";
 
 export async function runParsingScript(admin: SupabaseClient, job: JobRow): Promise<StageResult> {
   if (!job.script_text) throw new Error("Missing script_text going into parsing_script stage");
@@ -18,30 +26,20 @@ export async function runParsingScript(admin: SupabaseClient, job: JobRow): Prom
   if (!existing || existing.length === 0) {
     const { characters, lines } = await parseScript(job.script_text);
 
-    // Auto-assign (skip the human review pause) only when EVERY character
-    // has a confident suggestion with an uploaded photo for it -- same
-    // trade-off and reasoning as diarizing.ts's canAutoAssign for the
-    // multi_speaker pipeline, just driven by the script's text/names
-    // instead of voice pitch.
-    const { data: photoRows, error: photoError } = await admin
-      .from("avatar_photos")
-      .select("category")
-      .eq("user_id", job.user_id);
-    if (photoError) throw new Error(`Failed to check avatar photos: ${photoError.message}`);
-    const uploadedCategories = new Set((photoRows ?? []).map((p: { category: string }) => p.category));
-    const canAutoAssign =
-      characters.length > 0 &&
-      characters.every((c) => c.suggested_category && uploadedCategories.has(c.suggested_category));
-
     const characterIds = new Map<string, string>();
     for (const character of characters) {
+      const category = character.suggested_category ?? DEFAULT_CATEGORY;
       const { data: charRow, error: charError } = await admin
         .from("drama_characters")
         .insert({
           job_id: job.id,
           name: character.name,
           suggested_avatar_category: character.suggested_category,
-          avatar_category: canAutoAssign ? character.suggested_category : null,
+          // Always set, never left for a human to pick -- a unique photo
+          // gets generated per character next regardless of category, so
+          // there's no cost to committing to a guess here the way there
+          // was for multi_speaker's voice-driven categories.
+          avatar_category: category,
         })
         .select("id")
         .single();
@@ -63,30 +61,9 @@ export async function runParsingScript(admin: SupabaseClient, job: JobRow): Prom
     if (linesError) throw new Error(`Failed to save script lines: ${linesError.message}`);
   }
 
-  // Re-derived fresh from the DB rather than the in-memory computation
-  // above, so this is correct on an idempotent retry too (existing
-  // already non-empty, insert skipped entirely) -- same pattern as
-  // diarizing.ts.
-  const { data: allCharacters, error: allCharactersError } = await admin
-    .from("drama_characters")
-    .select("avatar_category")
-    .eq("job_id", job.id);
-  if (allCharactersError) throw new Error(`Failed to check character assignments: ${allCharactersError.message}`);
-  const autoAssigned =
-    (allCharacters ?? []).length > 0 &&
-    (allCharacters ?? []).every((c: { avatar_category: string | null }) => c.avatar_category);
-
-  if (autoAssigned) {
-    return {
-      status: "translating_lines",
-      progress: 45,
-      logMessage: "Parsed script and auto-assigned avatars -- every character had a confident suggestion with a matching photo.",
-    };
-  }
-
   return {
-    status: "awaiting_character_avatars",
-    progress: 30,
-    logMessage: "Parsed script -- waiting for you to assign avatars to each character.",
+    status: "generating_character_avatars",
+    progress: 35,
+    logMessage: "Parsed script -- generating a unique AI avatar for each character.",
   };
 }

@@ -81,15 +81,32 @@ async function characterAvatarCategory(admin: SupabaseClient, characterId: strin
   return character.avatar_category as AvatarCategory | null;
 }
 
-async function characterAvatarSignedUrl(admin: SupabaseClient, job: JobRow, category: AvatarCategory): Promise<string> {
-  const { data: photo, error } = await admin
+// Prefers the character's own uniquely-generated avatar (see
+// generating_character_avatars.ts) -- falls back to the user's shared
+// avatar_photos category library only if that generation ultimately
+// failed and gave up (avatar_storage_path still null).
+async function characterAvatarSignedUrl(admin: SupabaseClient, job: JobRow, characterId: string): Promise<string> {
+  const { data: character, error } = await admin
+    .from("drama_characters")
+    .select("avatar_category, avatar_storage_path")
+    .eq("id", characterId)
+    .single();
+  if (error || !character) throw new Error(`Failed to look up character: ${error?.message ?? "not found"}`);
+
+  if (character.avatar_storage_path) {
+    return createSignedUrl(admin, character.avatar_storage_path);
+  }
+
+  const category = character.avatar_category as AvatarCategory | null;
+  if (!category) throw new Error("Character has no avatar_category assigned yet");
+  const { data: photo, error: photoError } = await admin
     .from("avatar_photos")
     .select("storage_path")
     .eq("user_id", job.user_id)
     .eq("category", category)
     .maybeSingle();
-  if (error) throw new Error(`Failed to look up avatar photo: ${error.message}`);
-  if (!photo) throw new Error(`No avatar photo found for category "${category}"`);
+  if (photoError) throw new Error(`Failed to look up avatar photo: ${photoError.message}`);
+  if (!photo) throw new Error(`No avatar photo found for category "${category}" (and this character's own avatar generation failed)`);
   return createSignedUrl(admin, photo.storage_path);
 }
 
@@ -111,9 +128,7 @@ async function processLineClip(admin: SupabaseClient, job: JobRow, line: DramaLi
   if (!line.replicate_prediction_id) {
     if (!line.tts_storage_path) throw new Error("Line has no tts_storage_path going into clip generation");
 
-    const avatarCategory = await characterAvatarCategory(admin, line.character_id);
-    if (!avatarCategory) throw new Error("Character has no avatar_category assigned yet");
-    const avatarImageUrl = await characterAvatarSignedUrl(admin, job, avatarCategory);
+    const avatarImageUrl = await characterAvatarSignedUrl(admin, job, line.character_id);
     const audioUrl = await createSignedUrl(admin, line.tts_storage_path);
     const prediction = await createAvatarPrediction(avatarImageUrl, audioUrl);
 

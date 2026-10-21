@@ -20,6 +20,7 @@ export type JobStatus =
   // script (character + dialogue line pairs) using fictional AI avatars,
   // no source video at all.
   | "parsing_script"
+  | "generating_character_avatars"
   | "awaiting_character_avatars"
   | "translating_lines"
   | "generating_clips"
@@ -131,6 +132,16 @@ export interface DramaCharacterRow {
   name: string;
   avatar_category: AvatarCategory | null;
   suggested_avatar_category: AvatarCategory | null;
+  // A unique AI-generated photo for this specific character -- separate
+  // from the user's shared avatar_photos library, so two characters
+  // assigned the same category (e.g. two "man" roles) don't end up
+  // looking identical. Null until generating_character_avatars.ts fills
+  // it in; generating_clips.ts falls back to the shared avatar_photos
+  // category lookup if it's still null (e.g. generation failed and gave
+  // up after retries).
+  avatar_storage_path: string | null;
+  avatar_prediction_id: string | null;
+  avatar_retry_count: number;
   created_at: string;
   updated_at: string;
 }

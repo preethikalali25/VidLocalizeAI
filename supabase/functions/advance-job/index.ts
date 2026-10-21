@@ -14,6 +14,7 @@ import { runProcessingSegments } from "./stages/processing_segments.ts";
 import { runCompositing } from "./stages/compositing.ts";
 import { runFetchingSource } from "./stages/fetching_source.ts";
 import { runParsingScript } from "./stages/parsing_script.ts";
+import { runGeneratingCharacterAvatars } from "./stages/generating_character_avatars.ts";
 import { runTranslatingLines } from "./stages/translating_lines.ts";
 import { runGeneratingClips } from "./stages/generating_clips.ts";
 import { runAssemblingVideo } from "./stages/assembling_video.ts";
@@ -56,6 +57,7 @@ const STAGE_HANDLERS: Record<
   compositing: runCompositing,
   fetching_source: runFetchingSource,
   parsing_script: runParsingScript,
+  generating_character_avatars: runGeneratingCharacterAvatars,
   translating_lines: runTranslatingLines,
   generating_clips: runGeneratingClips,
   assembling_video: runAssemblingVideo,
