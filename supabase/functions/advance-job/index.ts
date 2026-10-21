@@ -20,13 +20,16 @@ import { runAssemblingVideo } from "./stages/assembling_video.ts";
 
 const MAX_RETRIES = 3;
 // Must stay comfortably above the longest bound any single stage call can
-// legitimately take -- video-utils calls are now capped at 90s (180s for
-// fetch-youtube, see videoUtils.ts), so this needs real headroom above
-// that. Too short and a still-running (not dead) call gets its job
-// re-claimed and re-run in parallel by the next sweep -- confirmed live,
-// this was the actual cause of the video-utils container getting hit by
-// several concurrent compositing calls at once and OOM-crashing.
-const STALE_AFTER_SECONDS = 240;
+// legitimately take -- video-utils calls are capped at 90s for most
+// operations, 180s for fetch-youtube, and 300s for concat (script_drama's
+// assembling_video, which scales with how many lines a script has -- see
+// videoUtils.ts), so this needs real headroom above the largest of those.
+// Too short and a still-running (not dead) call gets its job re-claimed
+// and re-run in parallel by the next sweep -- confirmed live twice now,
+// first with the video-utils container getting hit by several concurrent
+// compositing calls at once and OOM-crashing, then again with a 24-line
+// script's concat call timing out against the old, too-short bound here.
+const STALE_AFTER_SECONDS = 360;
 const MAX_JOBS_PER_SWEEP = 5;
 
 // deno-lint-ignore no-explicit-any

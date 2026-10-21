@@ -154,11 +154,21 @@ export async function compositeVideo(
 // together in order -- every clip IS the whole output (one per dialogue
 // line), not a replacement spliced into an existing source video.
 export async function concatClips(clipUrls: string[]): Promise<{ bytes: Uint8Array; contentType: string }> {
-  const res = await fetchWithTimeout(`${baseUrl()}/concat`, {
-    method: "POST",
-    headers: authHeaders(),
-    body: JSON.stringify({ clip_urls: clipUrls }),
-  });
+  const res = await fetchWithTimeout(
+    `${baseUrl()}/concat`,
+    {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ clip_urls: clipUrls }),
+    },
+    // Unlike every other video-utils call, this one scales with how many
+    // lines the script has, not a single bounded source video -- a real
+    // multi-character scene can easily mean 20+ clips to download and
+    // re-encode together. Confirmed live: the default 90s bound was too
+    // short for a 24-line script. Generous flat ceiling since the actual
+    // line count isn't known at the client.
+    300_000
+  );
   return readVideoResponse(res, "concat");
 }
 
