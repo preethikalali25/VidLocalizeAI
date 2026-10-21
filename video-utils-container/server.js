@@ -254,6 +254,41 @@ app.post("/composite", async (req, res) => {
   }
 });
 
+// POST /concat { clip_urls: string[] } -> video/mp4 bytes
+//
+// Stitches a list of already-generated clips together, in order, with no
+// splicing-into-a-source-video logic at all -- script_drama pipeline only
+// (see assembling_video.ts), where every clip IS the whole output (one
+// per dialogue line), unlike /composite's "replace parts of an existing
+// video" shape.
+app.post("/concat", async (req, res) => {
+  const { clip_urls } = req.body || {};
+  if (!Array.isArray(clip_urls) || clip_urls.length === 0) {
+    return res.status(400).json({ error: "clip_urls is required and must be a non-empty array" });
+  }
+
+  const clipFiles = [];
+  const concatListPath = tempPath(".txt");
+  const out = tempPath(".mp4");
+
+  try {
+    await Promise.all(clip_urls.map((url, i) => downloadToFile(url, (clipFiles[i] = tempPath(`-clip${i}.mp4`)))));
+
+    const concatList = clipFiles.map((p) => `file '${p.replace(/'/g, "'\\''")}'`).join("\n");
+    await fs.writeFile(concatListPath, concatList);
+    // Re-encode on concat, not stream-copy -- clips come from separate
+    // Replicate predictions with potentially different codecs/timestamps.
+    await runFfmpeg(["-y", "-f", "concat", "-safe", "0", "-i", concatListPath, "-c:v", "libx264", "-c:a", "aac", "-movflags", "+faststart", out]);
+
+    const bytes = await fs.readFile(out);
+    res.type("video/mp4").send(bytes);
+  } catch (err) {
+    res.status(500).json({ error: String(err.message || err) });
+  } finally {
+    await cleanup([out, concatListPath, ...clipFiles]);
+  }
+});
+
 // POST /stitch-audio
 //   { source_video_url, block_start_seconds, block_end_seconds,
 //     overlays: [{start_seconds, end_seconds, audio_url}] }

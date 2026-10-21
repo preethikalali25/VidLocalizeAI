@@ -14,7 +14,14 @@ export type ProcessingStatus =
   | "diarizing"
   | "awaiting_speaker_review"
   | "processing_segments"
-  | "compositing";
+  | "compositing"
+  // script_drama pipeline only -- generates an original video from a
+  // script, no source video at all.
+  | "parsing_script"
+  | "awaiting_character_avatars"
+  | "translating_lines"
+  | "generating_clips"
+  | "assembling_video";
 
 export type Language = "hindi" | "telugu" | "tamil" | "kannada" | "bengali";
 export type AvatarCategory = "man" | "woman" | "boy_child" | "girl_child" | "old_man" | "old_woman";
@@ -36,7 +43,7 @@ export interface JobRecord {
   source_lang: string;
   target_language: Language;
   avatar_category: AvatarCategory | null;
-  pipeline_mode: "single_avatar" | "multi_speaker";
+  pipeline_mode: "single_avatar" | "multi_speaker" | "script_drama";
   status: ProcessingStatus;
   progress: number;
   source_duration_seconds: number | null;
@@ -84,4 +91,24 @@ export interface JobSegmentRecord {
   sequence_index: number;
   source_text: string | null;
   status: "pending_tts" | "awaiting_followers" | "merged" | "pending_faceswap" | "pending_lipsync" | "ready" | "failed";
+}
+
+// script_drama pipeline only. Shape of a row from the `drama_characters`
+// table.
+export interface DramaCharacterRecord {
+  id: string;
+  job_id: string;
+  name: string;
+  avatar_category: AvatarCategory | null;
+}
+
+// script_drama pipeline only. Shape of a row from the `drama_lines`
+// table -- ProcessingPage only needs a preview per character, not the
+// full pipeline-internal shape.
+export interface DramaLineRecord {
+  id: string;
+  character_id: string;
+  sequence_index: number;
+  source_text: string;
+  status: "pending_tts" | "pending_clip" | "ready" | "failed";
 }

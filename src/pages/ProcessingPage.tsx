@@ -3,8 +3,17 @@ import { useParams, useNavigate } from "react-router-dom";
 import { CheckCircle, Clock, AlertCircle, XCircle, Download, LayoutDashboard, Loader2, Users, User } from "lucide-react";
 import { toast } from "sonner";
 import Navbar from "@/components/layout/Navbar";
-import { PROCESSING_STEPS, MULTI_SPEAKER_PROCESSING_STEPS, AVATAR_CATEGORIES } from "@/constants";
-import type { JobRecord, JobEventRecord, JobSpeakerRecord, JobSegmentRecord, AvatarPhotoRecord, AvatarCategory } from "@/types";
+import { PROCESSING_STEPS, MULTI_SPEAKER_PROCESSING_STEPS, SCRIPT_DRAMA_PROCESSING_STEPS, AVATAR_CATEGORIES } from "@/constants";
+import type {
+  JobRecord,
+  JobEventRecord,
+  JobSpeakerRecord,
+  JobSegmentRecord,
+  DramaCharacterRecord,
+  DramaLineRecord,
+  AvatarPhotoRecord,
+  AvatarCategory,
+} from "@/types";
 import { supabase, isSupabaseConfigured } from "@/lib/supabase";
 
 function emptyAvatarPhotoMap(): Record<AvatarCategory, string | null> {
@@ -28,6 +37,14 @@ export default function ProcessingPage() {
   const [reviewAvatarPhotos, setReviewAvatarPhotos] = useState<Record<AvatarCategory, string | null>>(emptyAvatarPhotoMap());
   const [speakersLoading, setSpeakersLoading] = useState(false);
   const [submittingAssignments, setSubmittingAssignments] = useState(false);
+
+  // script_drama pipeline only -- populated once the job reaches
+  // awaiting_character_avatars. Mirrors the speaker-review state above.
+  const [characters, setCharacters] = useState<DramaCharacterRecord[]>([]);
+  const [characterPreviews, setCharacterPreviews] = useState<Record<string, string>>({});
+  const [characterAssignments, setCharacterAssignments] = useState<Record<string, AvatarCategory | null>>({});
+  const [charactersLoading, setCharactersLoading] = useState(false);
+  const [submittingCharacterAssignments, setSubmittingCharacterAssignments] = useState(false);
 
   useEffect(() => {
     if (!isSupabaseConfigured || !supabase || !jobId) {
@@ -127,6 +144,71 @@ export default function ProcessingPage() {
     })();
   }, [job?.status, jobId, speakers.length, speakersLoading]);
 
+  // script_drama pipeline only. Same shape as the speaker-loading effect
+  // above, just reading drama_characters/drama_lines instead.
+  useEffect(() => {
+    if (!supabase || !jobId || job?.status !== "awaiting_character_avatars" || characters.length > 0 || charactersLoading) return;
+
+    (async () => {
+      setCharactersLoading(true);
+      const [{ data: characterRows, error: charactersError }, { data: lineRows }, { data: photoRows }] = await Promise.all([
+        supabase.from("drama_characters").select("*").eq("job_id", jobId).order("name", { ascending: true }),
+        supabase.from("drama_lines").select("id, character_id, sequence_index, source_text, status").eq("job_id", jobId),
+        supabase.from("avatar_photos").select("*"),
+      ]);
+      if (charactersError) {
+        toast.error(`Failed to load detected characters: ${charactersError.message}`);
+        setCharactersLoading(false);
+        return;
+      }
+
+      const previews: Record<string, string> = {};
+      for (const line of (lineRows ?? []) as DramaLineRecord[]) {
+        if (!previews[line.character_id] && line.source_text) previews[line.character_id] = line.source_text;
+      }
+      setCharacterPreviews(previews);
+
+      const photoMap = emptyAvatarPhotoMap();
+      await Promise.all(
+        ((photoRows ?? []) as AvatarPhotoRecord[]).map(async (row) => {
+          const { data: signed } = await supabase.storage.from("job-assets").createSignedUrl(row.storage_path, 3600);
+          photoMap[row.category] = signed?.signedUrl ?? null;
+        })
+      );
+      setReviewAvatarPhotos(photoMap);
+
+      const rows = (characterRows ?? []) as DramaCharacterRecord[];
+      setCharacters(rows);
+      setCharacterAssignments(Object.fromEntries(rows.map((c) => [c.id, c.avatar_category])));
+      setCharactersLoading(false);
+    })();
+  }, [job?.status, jobId, characters.length, charactersLoading]);
+
+  const handleSubmitCharacterAssignments = useCallback(async () => {
+    if (!supabase || !jobId) return;
+    const missing = characters.filter((c) => !characterAssignments[c.id]);
+    if (missing.length > 0) {
+      toast.error("Please choose an avatar for every character");
+      return;
+    }
+
+    setSubmittingCharacterAssignments(true);
+    try {
+      const { error } = await supabase.functions.invoke("submit-character-avatars", {
+        body: {
+          job_id: jobId,
+          assignments: characters.map((c) => ({ character_id: c.id, avatar_category: characterAssignments[c.id] })),
+        },
+      });
+      if (error) throw new Error(error.message);
+      toast.success("Avatars assigned — resuming processing.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to submit avatar assignments");
+    } finally {
+      setSubmittingCharacterAssignments(false);
+    }
+  }, [jobId, characters, characterAssignments]);
+
   const handleSubmitAssignments = useCallback(async () => {
     if (!supabase || !jobId) return;
     const missing = speakers.filter((s) => !assignments[s.id]);
@@ -198,11 +280,14 @@ export default function ProcessingPage() {
   const isComplete = job.status === "complete";
   const isError = job.status === "error";
   const isMultiSpeaker = job.pipeline_mode === "multi_speaker";
-  const isAwaitingReview = job.status === "awaiting_speaker_review";
-  const steps = isMultiSpeaker ? MULTI_SPEAKER_PROCESSING_STEPS : PROCESSING_STEPS;
+  const isScriptDrama = job.pipeline_mode === "script_drama";
+  const isAwaitingReview = job.status === "awaiting_speaker_review" || job.status === "awaiting_character_avatars";
+  const steps = isMultiSpeaker ? MULTI_SPEAKER_PROCESSING_STEPS : isScriptDrama ? SCRIPT_DRAMA_PROCESSING_STEPS : PROCESSING_STEPS;
   const currentStepIndex = steps.findIndex((s) => s.id === job.status);
   const avatarLabel = isMultiSpeaker
     ? "Multiple people"
+    : isScriptDrama
+    ? "AI cast"
     : AVATAR_CATEGORIES.find((c) => c.value === job.avatar_category)?.label ?? "—";
 
   return (
@@ -299,7 +384,7 @@ export default function ProcessingPage() {
 
           {/* Logs + Complete */}
           <div className="lg:col-span-3 space-y-4">
-            {isAwaitingReview && (
+            {job.status === "awaiting_speaker_review" && (
               <div className="glass-card rounded-2xl p-6 border border-primary/20 bg-primary/5 slide-up">
                 <div className="flex items-center gap-3 mb-2">
                   <Users size={22} className="text-primary" />
@@ -374,6 +459,80 @@ export default function ProcessingPage() {
                       className="w-full flex items-center justify-center gap-2 px-6 py-3 rounded-xl gradient-primary text-white font-semibold hover:opacity-90 transition-all disabled:opacity-60"
                     >
                       {submittingAssignments ? "Submitting..." : "Continue Processing"}
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {job.status === "awaiting_character_avatars" && (
+              <div className="glass-card rounded-2xl p-6 border border-primary/20 bg-primary/5 slide-up">
+                <div className="flex items-center gap-3 mb-2">
+                  <Users size={22} className="text-primary" />
+                  <h3 className="font-display font-700 text-lg">Assign Avatars</h3>
+                </div>
+                <p className="text-sm text-muted-foreground mb-6">
+                  We found {characters.length} character{characters.length === 1 ? "" : "s"} in your script. Choose
+                  an avatar for each before we continue.
+                </p>
+
+                {charactersLoading ? (
+                  <p className="text-sm text-muted-foreground">Loading detected characters...</p>
+                ) : (
+                  <div className="space-y-5">
+                    {characters.map((character) => (
+                      <div key={character.id} className="p-4 rounded-xl bg-muted/50 border border-white/5">
+                        <div className="flex items-start gap-3 mb-3">
+                          <div className="w-10 h-10 rounded-full bg-muted flex items-center justify-center flex-shrink-0">
+                            <User size={18} className="text-muted-foreground/50" />
+                          </div>
+                          <div className="min-w-0">
+                            <p className="font-display font-600 text-sm">{character.name}</p>
+                            {characterPreviews[character.id] && (
+                              <p className="text-xs text-muted-foreground line-clamp-2 mt-0.5">
+                                "{characterPreviews[character.id]}"
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
+                          {AVATAR_CATEGORIES.map((cat) => {
+                            const photoUrl = reviewAvatarPhotos[cat.value];
+                            const isSelected = characterAssignments[character.id] === cat.value;
+                            return (
+                              <button
+                                key={cat.value}
+                                type="button"
+                                disabled={!photoUrl}
+                                onClick={() => setCharacterAssignments((prev) => ({ ...prev, [character.id]: cat.value }))}
+                                title={photoUrl ? cat.label : `${cat.label} — not uploaded`}
+                                className={`rounded-lg overflow-hidden border transition-all ${
+                                  !photoUrl ? "opacity-30 cursor-not-allowed border-white/10" :
+                                  isSelected ? "border-primary ring-2 ring-primary/30" :
+                                  "border-white/10 hover:border-white/20"
+                                }`}
+                              >
+                                <div className="aspect-square bg-muted flex items-center justify-center">
+                                  {photoUrl ? (
+                                    <img src={photoUrl} alt={cat.label} className="w-full h-full object-cover" />
+                                  ) : (
+                                    <User size={16} className="text-muted-foreground/30" />
+                                  )}
+                                </div>
+                                <p className="text-[10px] text-center py-1 truncate px-1">{cat.label}</p>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ))}
+
+                    <button
+                      onClick={handleSubmitCharacterAssignments}
+                      disabled={submittingCharacterAssignments || characters.length === 0}
+                      className="w-full flex items-center justify-center gap-2 px-6 py-3 rounded-xl gradient-primary text-white font-semibold hover:opacity-90 transition-all disabled:opacity-60"
+                    >
+                      {submittingCharacterAssignments ? "Submitting..." : "Continue Processing"}
                     </button>
                   </div>
                 )}

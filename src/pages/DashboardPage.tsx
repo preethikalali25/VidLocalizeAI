@@ -28,6 +28,13 @@ const STATUS_CONFIG: Record<ProcessingStatus, { label: string; color: string; ic
   awaiting_speaker_review: { label: "Awaiting Your Input", color: "text-primary", icon: Clock },
   processing_segments: { label: "Processing Segments", color: "text-purple-400", icon: Loader2 },
   compositing: { label: "Compositing", color: "text-orange-400", icon: Loader2 },
+  // script_drama pipeline additions -- added up front this time, not
+  // after a crash (see the comment above for how that went last time).
+  parsing_script: { label: "Reading Script", color: "text-blue-400", icon: Loader2 },
+  awaiting_character_avatars: { label: "Awaiting Your Input", color: "text-primary", icon: Clock },
+  translating_lines: { label: "Translating", color: "text-blue-400", icon: Loader2 },
+  generating_clips: { label: "Generating Clips", color: "text-purple-400", icon: Loader2 },
+  assembling_video: { label: "Assembling Video", color: "text-orange-400", icon: Loader2 },
 };
 
 const TABS = ["all", "processing", "complete"] as const;

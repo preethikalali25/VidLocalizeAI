@@ -43,6 +43,18 @@ export const MULTI_SPEAKER_PROCESSING_STEPS: ProcessingStep[] = [
   { id: "compositing", label: "Compositing", description: "Assembling the final video", duration: 5000 },
 ];
 
+// script_drama pipeline only -- generates an original video from a
+// script, no source video at all. parsing_script/generating_clips don't
+// map to one fixed duration (they depend on how many lines the script
+// has), same reasoning as MULTI_SPEAKER_PROCESSING_STEPS above.
+export const SCRIPT_DRAMA_PROCESSING_STEPS: ProcessingStep[] = [
+  { id: "parsing_script", label: "Reading Script", description: "Finding characters and their lines", duration: 4000 },
+  { id: "awaiting_character_avatars", label: "Your Review", description: "Waiting for you to assign avatars", duration: 0 },
+  { id: "translating_lines", label: "Translating", description: "Translating each character's lines", duration: 4000 },
+  { id: "generating_clips", label: "Generating Clips", description: "Voice and video per line", duration: 8000 },
+  { id: "assembling_video", label: "Assembling Video", description: "Stitching every clip together", duration: 5000 },
+];
+
 // v1 cap: keeps avatar/lip-sync render cost and turnaround low while the
 // real pipeline is being validated. Raise once proven reliable.
 export const MAX_UPLOAD_DURATION_SECONDS = 180;

@@ -19,6 +19,8 @@ interface CreateJobBody {
   sourceFileName?: string;
   sourceDurationSeconds?: number;
   sourceSizeBytes?: number;
+  // script_drama only -- no source video at all, see below.
+  scriptText?: string;
 }
 
 function badRequest(message: string): Response {
@@ -62,15 +64,25 @@ Deno.serve(async (req: Request) => {
     return badRequest(`targetLanguage must be one of ${ALLOWED_TARGET_LANGUAGES.join(", ")}`);
   }
 
-  const inputMethod = body.inputMethod === "youtube" ? "youtube" : "upload";
-  if (inputMethod === "upload" && !body.sourceStoragePath) {
-    return badRequest("sourceStoragePath is required for upload jobs");
+  const pipelineMode =
+    body.pipelineMode === "multi_speaker" ? "multi_speaker" : body.pipelineMode === "script_drama" ? "script_drama" : "single_avatar";
+
+  // script_drama has no source video at all -- it's generated entirely
+  // from a script, see parsing_script.ts. Skip every source-video check
+  // below for it.
+  const inputMethod = pipelineMode === "script_drama" ? "script" : body.inputMethod === "youtube" ? "youtube" : "upload";
+  if (pipelineMode === "script_drama" && !body.scriptText?.trim()) {
+    return badRequest("scriptText is required for script_drama jobs");
   }
-  if (inputMethod === "youtube" && (!body.sourceYoutubeUrl || !isYoutubeUrl(body.sourceYoutubeUrl))) {
-    return badRequest("sourceYoutubeUrl is required and must be a youtube.com/youtu.be URL");
+  if (pipelineMode !== "script_drama") {
+    if (inputMethod === "upload" && !body.sourceStoragePath) {
+      return badRequest("sourceStoragePath is required for upload jobs");
+    }
+    if (inputMethod === "youtube" && (!body.sourceYoutubeUrl || !isYoutubeUrl(body.sourceYoutubeUrl))) {
+      return badRequest("sourceYoutubeUrl is required and must be a youtube.com/youtu.be URL");
+    }
   }
 
-  const pipelineMode = body.pipelineMode === "multi_speaker" ? "multi_speaker" : "single_avatar";
   if (pipelineMode === "single_avatar" && !ALLOWED_AVATAR_CATEGORIES.includes(body.avatarCategory ?? "")) {
     return badRequest(`avatarCategory must be one of ${ALLOWED_AVATAR_CATEGORIES.join(", ")}`);
   }
@@ -155,13 +167,14 @@ Deno.serve(async (req: Request) => {
       // fetching_source (youtube jobs only) populates source_storage_path
       // itself once it downloads the video -- null here is intentional,
       // not a bug, same as it starting null for multi_speaker's
-      // avatar_category.
-      status: inputMethod === "youtube" ? "fetching_source" : "validating",
+      // avatar_category. script_drama has no source video at all.
+      status: pipelineMode === "script_drama" ? "parsing_script" : inputMethod === "youtube" ? "fetching_source" : "validating",
       source_storage_path: inputMethod === "upload" ? body.sourceStoragePath : null,
       source_youtube_url: inputMethod === "youtube" ? body.sourceYoutubeUrl : null,
       source_file_name: body.sourceFileName ?? null,
       source_duration_seconds: body.sourceDurationSeconds ?? null,
       source_size_bytes: body.sourceSizeBytes ?? null,
+      script_text: pipelineMode === "script_drama" ? body.scriptText : null,
     })
     .select("id")
     .single();

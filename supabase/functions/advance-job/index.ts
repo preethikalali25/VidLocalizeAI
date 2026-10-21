@@ -13,6 +13,10 @@ import { runDiarizing } from "./stages/diarizing.ts";
 import { runProcessingSegments } from "./stages/processing_segments.ts";
 import { runCompositing } from "./stages/compositing.ts";
 import { runFetchingSource } from "./stages/fetching_source.ts";
+import { runParsingScript } from "./stages/parsing_script.ts";
+import { runTranslatingLines } from "./stages/translating_lines.ts";
+import { runGeneratingClips } from "./stages/generating_clips.ts";
+import { runAssemblingVideo } from "./stages/assembling_video.ts";
 
 const MAX_RETRIES = 3;
 // Must stay comfortably above the longest bound any single stage call can
@@ -28,11 +32,12 @@ const MAX_JOBS_PER_SWEEP = 5;
 // deno-lint-ignore no-explicit-any
 type Admin = any;
 
-// awaiting_speaker_review is deliberately excluded: it's the one status
-// that never auto-advances on a tick. Only submit-speaker-assignments is
-// allowed to move a job out of it (see the Phase 4 plan).
+// awaiting_speaker_review and awaiting_character_avatars are deliberately
+// excluded: they're the statuses that never auto-advance on a tick. Only
+// submit-speaker-assignments / submit-character-avatars are allowed to
+// move a job out of either one.
 const STAGE_HANDLERS: Record<
-  Exclude<JobStatus, "complete" | "error" | "awaiting_speaker_review">,
+  Exclude<JobStatus, "complete" | "error" | "awaiting_speaker_review" | "awaiting_character_avatars">,
   (admin: Admin, job: JobRow) => Promise<StageResult>
 > = {
   validating: runValidating,
@@ -47,6 +52,10 @@ const STAGE_HANDLERS: Record<
   processing_segments: runProcessingSegments,
   compositing: runCompositing,
   fetching_source: runFetchingSource,
+  parsing_script: runParsingScript,
+  translating_lines: runTranslatingLines,
+  generating_clips: runGeneratingClips,
+  assembling_video: runAssemblingVideo,
 };
 
 async function advanceOneJob(admin: Admin, job: JobRow): Promise<void> {
@@ -157,7 +166,7 @@ Deno.serve(async (req: Request) => {
   const { data: jobs, error } = await admin
     .from("jobs")
     .select("*")
-    .not("status", "in", "(complete,error,awaiting_speaker_review)")
+    .not("status", "in", "(complete,error,awaiting_speaker_review,awaiting_character_avatars)")
     .lt("last_advanced_at", staleCutoff)
     .order("last_advanced_at", { ascending: true })
     .limit(MAX_JOBS_PER_SWEEP);

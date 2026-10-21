@@ -250,6 +250,59 @@ export async function translateSegments(texts: string[], targetLanguage: string)
   return parsed.translations;
 }
 
+// script_drama pipeline only. Parses an arbitrary script format (plain
+// "NAME: line" text, screenplay format, whatever the human actually
+// wrote) into structured character+line pairs in reading order. Using
+// Gemini for this rather than a regex/line-parser since real scripts
+// vary a lot in convention (character name casing, parenthetical stage
+// directions inline or on their own line, scene headers) -- explicitly
+// told to exclude stage directions/scene descriptions, since only actual
+// spoken dialogue gets voiced.
+export interface ScriptLine {
+  character_name: string;
+  text: string;
+}
+
+export async function parseScript(scriptText: string): Promise<ScriptLine[]> {
+  const responseSchema = {
+    type: "OBJECT",
+    properties: {
+      lines: {
+        type: "ARRAY",
+        items: {
+          type: "OBJECT",
+          properties: {
+            character_name: { type: "STRING" },
+            text: { type: "STRING" },
+          },
+          required: ["character_name", "text"],
+        },
+      },
+    },
+    required: ["lines"],
+  };
+
+  const raw = await generateContent(
+    [
+      {
+        text:
+          `Parse the following script into a list of spoken dialogue lines, in reading order. For each line, ` +
+          `give the character's name exactly as credited (e.g. "MOM", "Dad", "Lily") and the words they actually ` +
+          `say. Do NOT include stage directions, parentheticals describing tone/action (e.g. "(giggling)"), scene ` +
+          `headers, or narration -- only lines a voice actor would actually speak aloud. Normalize each ` +
+          `character's name to the same spelling/casing every time they speak.\n\n${scriptText}`,
+      },
+    ],
+    { responseMimeType: "application/json", responseSchema }
+  );
+
+  const parsed = JSON.parse(raw);
+  if (!Array.isArray(parsed.lines) || parsed.lines.length === 0) {
+    throw new Error("Gemini script parsing returned no dialogue lines");
+  }
+  return parsed.lines;
+}
+
 export async function translateText(text: string, targetLanguage: string): Promise<string> {
   return generateContent([
     {

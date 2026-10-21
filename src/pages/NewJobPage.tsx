@@ -324,6 +324,9 @@ export default function NewJobPage() {
         <div className="mb-10">
           <h1 className="font-display text-3xl font-700 mb-2">Create New Localization Job</h1>
           <p className="text-muted-foreground">Transform your video into an AI-generated Indian language presentation</p>
+          <button onClick={() => navigate("/new-drama")} className="text-sm text-primary underline mt-2">
+            Or create an AI Drama from a script instead →
+          </button>
         </div>
 
         {/* Step indicator */}

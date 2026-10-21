@@ -150,6 +150,18 @@ export async function compositeVideo(
   return readVideoResponse(res, "composite");
 }
 
+// script_drama pipeline only. Stitches a list of already-generated clips
+// together in order -- every clip IS the whole output (one per dialogue
+// line), not a replacement spliced into an existing source video.
+export async function concatClips(clipUrls: string[]): Promise<{ bytes: Uint8Array; contentType: string }> {
+  const res = await fetchWithTimeout(`${baseUrl()}/concat`, {
+    method: "POST",
+    headers: authHeaders(),
+    body: JSON.stringify({ clip_urls: clipUrls }),
+  });
+  return readVideoResponse(res, "concat");
+}
+
 export interface AudioOverlay {
   start_seconds: number;
   end_seconds: number;

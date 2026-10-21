@@ -15,7 +15,15 @@ export type JobStatus =
   | "processing_segments"
   | "compositing"
   // youtube input_method only
-  | "fetching_source";
+  | "fetching_source"
+  // script_drama pipeline only -- generates an original video from a
+  // script (character + dialogue line pairs) using fictional AI avatars,
+  // no source video at all.
+  | "parsing_script"
+  | "awaiting_character_avatars"
+  | "translating_lines"
+  | "generating_clips"
+  | "assembling_video";
 
 export type AvatarCategory = "man" | "woman" | "boy_child" | "girl_child" | "old_man" | "old_woman";
 
@@ -26,8 +34,10 @@ export interface JobRow {
   source_lang: string;
   target_language: string;
   avatar_category: AvatarCategory | null;
-  pipeline_mode: "single_avatar" | "multi_speaker";
+  pipeline_mode: "single_avatar" | "multi_speaker" | "script_drama";
   input_method: string;
+  // script_drama only -- the raw script text submitted at job creation.
+  script_text: string | null;
   // Null until fetching_source populates it (youtube jobs only) -- direct
   // uploads have this set at job-creation time already.
   source_storage_path: string | null;
@@ -107,6 +117,42 @@ export interface JobSegmentRow {
   block_start_seconds: number | null;
   block_end_seconds: number | null;
   stitched_audio_storage_path: string | null;
+}
+
+export type DramaLineStatus = "pending_tts" | "pending_clip" | "ready" | "failed";
+
+// One row per distinct character name found in a script_drama job's
+// script (script_drama only). avatar_category starts null and is filled
+// in by the human during the awaiting_character_avatars pause -- same
+// pattern as JobSpeakerRow.avatar_category for multi_speaker.
+export interface DramaCharacterRow {
+  id: string;
+  job_id: string;
+  name: string;
+  avatar_category: AvatarCategory | null;
+  created_at: string;
+  updated_at: string;
+}
+
+// One row per dialogue line, in script order (script_drama only). status
+// tracks this line's own per-stage progress (pending_tts -> pending_clip
+// -> ready/failed) independently of the parent job's status -- same
+// "one tick = one unit of work" shape as JobSegmentRow, just simpler (no
+// face-swap, no block-merging -- every line gets its own clip,
+// concatenated back to back by assembling_video.ts).
+export interface DramaLineRow {
+  id: string;
+  job_id: string;
+  character_id: string;
+  sequence_index: number;
+  source_text: string;
+  translated_text: string | null;
+  tts_storage_path: string | null;
+  replicate_prediction_id: string | null;
+  clip_storage_path: string | null;
+  status: DramaLineStatus;
+  retry_count: number;
+  error_message: string | null;
 }
 
 // A stage handler does exactly one unit of work and describes how the job
